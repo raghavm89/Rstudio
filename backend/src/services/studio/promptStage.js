@@ -3,6 +3,7 @@
 const pool = require('../../config/db');
 const { isPubliclyFetchable } = require('./storageFactory');
 const { buildWorkflow, WorkflowError } = require('./comfyui/buildWorkflow');
+const { deriveMotionPrompt } = require('./motionPrompt');
 
 /**
  * The `prompt` stage — the last gap in the DAG.
@@ -248,6 +249,30 @@ const PromptStage = {
         );
 
         assembled.push({ shot_id: shot.id, seq: shot.seq, job_id: stillJob.id, prompt: built.prompt, seed: built.seed });
+      }
+
+      // Motion jobs (video kinds) get a MOTION prompt — a short, appearance-free
+      // camera/subject-motion instruction — rather than falling back to the
+      // still's look prompt, which makes an image-to-video model re-invent the
+      // scene and drift the face. Ordered by id lines each motion job up with
+      // its shot, the same convention the still jobs use above.
+      const { rows: motionJobs } = await client.query(
+        `SELECT id, payload FROM render_jobs
+          WHERE project_id = $1 AND stage = 'motion'
+          ORDER BY id`,
+        [job.project_id]
+      );
+      for (let i = 0; i < motionJobs.length; i += 1) {
+        const mshot = shots[i] || shots[shots.length - 1];
+        if (!mshot) break;
+        const mj = motionJobs[i];
+        const generation = { ...(mj.payload?.generation || {}), motion_prompt: deriveMotionPrompt(mshot) };
+        await client.query(
+          `UPDATE render_jobs
+              SET payload = jsonb_set(payload, '{generation}', $2::jsonb, true), updated_at = NOW()
+            WHERE id = $1`,
+          [mj.id, JSON.stringify(generation)]
+        );
       }
 
       await client.query('COMMIT');

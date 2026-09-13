@@ -3,6 +3,8 @@
 const pool        = require('../../config/db');
 const RenderJob   = require('../../models/renderJob');
 const PromptStage = require('./promptStage');
+const AssembleStage = require('./assembleStage');
+const CopyStage = require('./copyStage');
 
 /**
  * Runs the `server` stages in the API process.
@@ -26,7 +28,9 @@ const PromptStage = require('./promptStage');
  */
 
 const HANDLERS = {
-  prompt: (job) => PromptStage.execute(job),
+  prompt:   (job) => PromptStage.execute(job),
+  assemble: (job) => AssembleStage.execute(job),
+  copy:     (job) => CopyStage.execute(job),
 };
 
 const DEFAULTS = {

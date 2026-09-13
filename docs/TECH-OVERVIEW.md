@@ -144,7 +144,14 @@ external lead time, not code.
 4. Apply migrations against a fresh DB; run the suite green.
 5. Re-cull Aanya's seed set to a balanced ~18 _(you: taste)_.
 6. Embed → train → calibrate → first real shoot _(fal spend)_.
-7. Build the remaining stage handlers (`assemble`, `copy`, `motion_prompt`).
+7. ~~Build the remaining stage handlers~~ **DONE** — `assemble` (pull motion
+   clips + voice, single-clip passthrough, else ffmpeg stitch), `copy` (caption
+   in the persona's voice via Anthropic), and `motion_prompt` derivation
+   (framing-based, appearance-free) are built + registered; boots clean, pure
+   logic tested. **Two adjacent gaps surfaced:** (a) no handler for the `voice`
+   stage yet, and (b) nothing pushes a finished still's image URL onto its motion
+   job (`generation.image_url`) — both needed before a video shoot runs
+   end-to-end on real pixels.
 
 **Lane 3 — close the offering**
 8. Realtime per-minute price + provider _(you)_; confirm the cost estimates.
