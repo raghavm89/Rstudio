@@ -169,7 +169,12 @@ external lead time, not code.
 
 **Lane 3 — close the offering**
 8. Realtime per-minute price + provider _(you)_; confirm the cost estimates.
-9. Credit denomination — map unit bundles to ledger credit rates.
+9. ~~Credit denomination~~ **SETTLED** (`credit-denomination-settled.md`): 1
+   still = 1 credit, wallet + guide, top-up ₹500/77cr, realtime ₹40/min. Plan
+   **prices + tiers are LIVE** (migration 055: Free/Catalogue/Pro/Max/Ultra,
+   avatar counts, Ultra 60 realtime min — verified against Postgres). The
+   **per-piece credit wallet** (metering change) is the scoped follow-up before
+   gateway plans.
 10. Legal guardrail sign-off _(you: Indian lawyer)_.
 
 **Lane 4 — billing live**
