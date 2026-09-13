@@ -8,6 +8,7 @@ const SeedBatch      = require('./seedBatch');
 const LoraTraining   = require('./loraTraining');
 const CreditLedger   = require('./creditLedger');
 const CalibrationChain = require('./calibrationChain');
+const ShootAssets     = require('./shootAssets');
 
 /**
  * What happens when a render finishes.
@@ -224,6 +225,22 @@ async function completed(existing, workerId, { result, seconds_generated, megapi
  * storage, the money is spent, and the culling screen says "no photos yet".
  */
 async function recordArtefacts(existing, done, result, cost_cents) {
+  // A finished shoot still: record its frames as studio_assets and hand the
+  // first to this shot's motion job (image-to-video input). QC-based selection
+  // of the best candidate is a separate stage; this only records and wires.
+  if (done.stage === 'still') {
+    const client = await pool.connect();
+    try {
+      const out = await ShootAssets.recordStillAndFeedMotion(client, { existing, done, result });
+      console.log(`[job ${done.id}] recorded ${out.assets} still asset(s)` + (out.motionFed ? ', fed motion' : ''));
+    } catch (err) {
+      console.error(`[job ${done.id}] still finished but asset/motion wiring failed: ${err.message}`);
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
   if (done.stage === 'seed_still') {
     const p = existing.payload || {};
     const assets = result.assets || [];

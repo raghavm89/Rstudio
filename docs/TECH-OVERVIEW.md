@@ -148,10 +148,14 @@ external lead time, not code.
    clips + voice, single-clip passthrough, else ffmpeg stitch), `copy` (caption
    in the persona's voice via Anthropic), and `motion_prompt` derivation
    (framing-based, appearance-free) are built + registered; boots clean, pure
-   logic tested. **Two adjacent gaps surfaced:** (a) no handler for the `voice`
-   stage yet, and (b) nothing pushes a finished still's image URL onto its motion
-   job (`generation.image_url`) — both needed before a video shoot runs
-   end-to-end on real pixels.
+   logic tested. Also **closed the still→motion data gap**: a finished shoot
+   still now records its frames as `studio_assets` and feeds the first frame to
+   its motion job as `generation.image_url` (`shootAssets.js`), so image-to-video
+   has an input. **Still needed before a video shoot runs end-to-end on real
+   pixels:** (a) the `qc` stage has no executor — embed each candidate, faceQc-judge
+   against the calibrated baseline, mark the winner `selected`, and re-point the
+   motion input at it (`faceQc.js` is the judge; wiring + the embedder call are
+   unbuilt); (b) no handler for the `voice` stage.
 
 **Lane 3 — close the offering**
 8. Realtime per-minute price + provider _(you)_; confirm the cost estimates.
