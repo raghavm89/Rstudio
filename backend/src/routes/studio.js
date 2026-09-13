@@ -126,6 +126,7 @@ adminRouter.delete('/catalogue/:id',     parseId('id'), asyncHandler(admin.remov
 router.use('/admin', adminRouter);
 
 // The one click. Everything else on this plane is plumbing around it.
+router.get ('/shoots',                 authorize(...TENANT_ROLES), asyncHandler(shootCtrl.list));
 router.post('/shoots',                 authorize(...TENANT_ROLES), asyncHandler(shootCtrl.create));
 router.get ('/shoots/:id',             authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.progress));
 
@@ -146,6 +147,17 @@ router.get ('/catalogue/selected',   authorize(...TENANT_ROLES), asyncHandler(ca
 router.post('/catalogue/:id/select', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(catalogueCtrl.select));
 // Publishing a built avatar into the shared library is a platform action.
 router.post('/avatars/:id/publish-to-catalogue', authorize('admin'), parseId('id'), asyncHandler(catalogueCtrl.publish));
+
+// ── Content templates — reusable ad / viral recipes applied onto an avatar.
+// Platform library + a tenant's own; apply = a shoot via the orchestrator.
+const templateCtrl = require('../controllers/studioTemplateController');
+router.get   ('/templates',                authorize(...TENANT_ROLES), asyncHandler(templateCtrl.list));
+router.post  ('/templates',                authorize(...TENANT_ROLES), asyncHandler(templateCtrl.create));
+router.post  ('/templates/from-shoot/:id', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.saveFromShoot));
+router.get   ('/templates/:id',            authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.get));
+router.post  ('/templates/:id/apply',      authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.apply));
+router.delete('/templates/:id',            authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.remove));
+router.post  ('/templates/:id/publish',    authorize('admin'), parseId('id'), asyncHandler(templateCtrl.publish));
 router.post('/avatars',       authorize(...TENANT_ROLES), asyncHandler(avatarCtrl.create));
 // After /avatars/rules, so the literal segment is matched before the parameter.
 router.get ('/avatars/:id',   authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.get));

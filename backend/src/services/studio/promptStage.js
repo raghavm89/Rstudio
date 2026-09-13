@@ -80,13 +80,16 @@ const PromptStage = {
 
       const avatarId = job.payload?.avatar_id;
       const { rows: avatarRows } = await client.query(
-        `SELECT a.id, a.slug, a.identity_block, a.avoid_block,
+        `SELECT a.id, a.slug, a.identity_block, a.avoid_block, a.subject_type,
                 l.id AS lora_id, l.file_path, l.trigger_token, l.base_checkpoint,
                 lp.base_look, lp.lens, lp.colour, lp.grain, lp.skin,
-                lp.natural_asymmetry, lp.hair_detail, lp.vocabulary_version
+                lp.natural_asymmetry, lp.hair_detail, lp.vocabulary_version,
+                sp.render_style, sp.palette, sp.line_weight, sp.shading, sp.background,
+                sp.vocabulary_version AS style_vocabulary_version
            FROM avatars a
-           LEFT JOIN avatar_loras  l  ON l.avatar_id = a.id AND l.active
-           LEFT JOIN look_profiles lp ON lp.avatar_id = a.id
+           LEFT JOIN avatar_loras   l  ON l.avatar_id = a.id AND l.active
+           LEFT JOIN look_profiles  lp ON lp.avatar_id = a.id
+           LEFT JOIN style_profiles sp ON sp.avatar_id = a.id
           WHERE a.id = $1 AND a.tenant_id = $2`,
         [avatarId, job.tenant_id]
       );
@@ -99,14 +102,21 @@ const PromptStage = {
       if (!row.lora_id) {
         throw new PromptStageError('This avatar has no active model', { status: 409, code: 'NO_LORA' });
       }
-      if (!row.base_look) {
+      const isCharacter = row.subject_type === 'character';
+      if (isCharacter) {
+        if (!row.render_style) {
+          throw new PromptStageError('This avatar has no style profile', { status: 409, code: 'NO_STYLE_PROFILE' });
+        }
+      } else if (!row.base_look) {
         throw new PromptStageError('This avatar has no look profile', { status: 409, code: 'NO_LOOK_PROFILE' });
       }
 
+      const vocabVersion =
+        (isCharacter ? row.style_vocabulary_version : row.vocabulary_version) || VOCABULARY_VERSION;
       const { rows: vocabulary } = await client.query(
         `SELECT facet, option_key, fragment FROM prompt_vocabulary
           WHERE version = $1 AND active`,
-        [row.vocabulary_version || VOCABULARY_VERSION]
+        [vocabVersion]
       );
       if (!vocabulary.length) {
         throw new PromptStageError(
@@ -167,11 +177,16 @@ const PromptStage = {
               trigger_token: row.trigger_token,
               base_checkpoint: row.base_checkpoint,
             },
-            lookProfile: {
-              base_look: row.base_look, lens: row.lens, colour: row.colour,
-              grain: row.grain, skin: row.skin,
-              natural_asymmetry: row.natural_asymmetry, hair_detail: row.hair_detail,
-            },
+            ...(isCharacter
+              ? { styleProfile: {
+                    render_style: row.render_style, palette: row.palette,
+                    line_weight: row.line_weight, shading: row.shading, background: row.background,
+                  } }
+              : { lookProfile: {
+                    base_look: row.base_look, lens: row.lens, colour: row.colour,
+                    grain: row.grain, skin: row.skin,
+                    natural_asymmetry: row.natural_asymmetry, hair_detail: row.hair_detail,
+                  } }),
             shot: {
               framing: shot.framing,
               light_direction: shot.light_direction,

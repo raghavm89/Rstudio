@@ -129,10 +129,11 @@ const Orchestrator = {
       // before quota is spent.
       const { rows: avatarRows } = await client.query(
         `SELECT a.*, l.id AS lora_id, lp.avatar_id AS has_look_profile,
-                c.verified AS consent_verified
+                sp.avatar_id AS has_style_profile, c.verified AS consent_verified
            FROM avatars a
-           LEFT JOIN avatar_loras  l  ON l.avatar_id = a.id AND l.active
-           LEFT JOIN look_profiles lp ON lp.avatar_id = a.id
+           LEFT JOIN avatar_loras   l  ON l.avatar_id = a.id AND l.active
+           LEFT JOIN look_profiles  lp ON lp.avatar_id = a.id
+           LEFT JOIN style_profiles sp ON sp.avatar_id = a.id
            LEFT JOIN consent_records c ON c.id = a.consent_record_id
           WHERE a.id = $1 AND (
                   a.tenant_id = $2
@@ -145,7 +146,12 @@ const Orchestrator = {
       const avatar = avatarRows[0];
       if (!avatar) throw Object.assign(new Error('Avatar not found'), { status: 404 });
       if (!avatar.lora_id) throw Object.assign(new Error('This avatar has no trained model yet'), { status: 409 });
-      if (!avatar.has_look_profile) throw Object.assign(new Error('This avatar has no look profile yet'), { status: 409 });
+      // A character is set up when it has a STYLE profile; a person a look profile.
+      const hasProfile = avatar.subject_type === 'character' ? avatar.has_style_profile : avatar.has_look_profile;
+      if (!hasProfile) {
+        const which = avatar.subject_type === 'character' ? 'style' : 'look';
+        throw Object.assign(new Error(`This avatar has no ${which} profile yet`), { status: 409 });
+      }
       if (avatar.mode !== 'synthetic' && !avatar.consent_verified) {
         throw Object.assign(
           new Error('This avatar depicts a real person and has no verified consent record'),

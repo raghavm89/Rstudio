@@ -153,5 +153,25 @@ exports.progress = async (req, res) => {
   res.json({ project, progress });
 };
 
+// GET /api/studio/shoots — the tenant's shoots, newest first.
+exports.list = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const { rows } = await pool.query(
+    `SELECT p.id, p.title, p.kind, p.slot_type, p.status, p.created_at,
+            a.name AS avatar_name,
+            (SELECT COUNT(*) FROM studio_scenes sc
+               JOIN studio_shots s ON s.scene_id = sc.id
+              WHERE sc.project_id = p.id)::int AS shots
+       FROM studio_projects p
+       LEFT JOIN avatars a ON a.id = p.avatar_id
+      WHERE p.tenant_id = $1
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT 100`,
+    [tenantId]
+  );
+  return res.json({ shoots: rows });
+};
+
 exports.KINDS = KINDS;
 exports.validateShots = validateShots;

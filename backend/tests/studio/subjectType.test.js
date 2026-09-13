@@ -40,7 +40,7 @@ test.before(async () => {
     `INSERT INTO avatar_loras (avatar_id, version, file_path, trigger_token, base_checkpoint, active)
      VALUES ($1,1,'mango.safetensors','mang0','flux1-dev.safetensors',TRUE)`, [AVATAR]
   );
-  await pool.query(`INSERT INTO look_profiles (avatar_id) VALUES ($1)`, [AVATAR]);
+  await pool.query(`INSERT INTO style_profiles (avatar_id) VALUES ($1)`, [AVATAR]);  // a character has a style profile, not a look profile
   await pool.query(
     `INSERT INTO studio_entitlements (plan_id, metric, limit_value, period)
      VALUES (NULL,'credits',100000,'month')

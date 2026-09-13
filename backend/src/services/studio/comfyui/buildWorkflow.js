@@ -296,7 +296,7 @@ function expressiblePresets(vocabulary, presets) {
  */
 function buildWorkflow(input) {
   const {
-    avatar, lora, lookProfile, shot, scene, vocabulary,
+    avatar, lora, lookProfile, styleProfile, shot, scene, vocabulary,
     locationText, wardrobeText,
     seed, quality = '2mp', steps = 24, guidance = 3.5,
     loraStrength = 0.95, filenamePrefix, backend = 'cuda',
@@ -307,9 +307,11 @@ function buildWorkflow(input) {
     throw new WorkflowError(`Unknown backend "${backend}" — expected one of ${Object.keys(TEMPLATES).join(', ')}.`);
   }
 
-  const prompt = assemblePrompt({
-    avatar, lora, lookProfile, shot, scene, vocabulary, locationText, wardrobeText,
-  });
+  // The graph is subject-agnostic; only the prompt differs. A style profile
+  // means a character (assembleCharacterPrompt); a look profile a person.
+  const prompt = styleProfile
+    ? assembleCharacterPrompt({ avatar, lora, styleProfile, shot, scene, vocabulary, locationText, wardrobeText })
+    : assemblePrompt({ avatar, lora, lookProfile, shot, scene, vocabulary, locationText, wardrobeText });
 
   const dims = DIMENSIONS[quality];
   if (!dims) throw new WorkflowError(`Unknown quality "${quality}" — expected one of ${Object.keys(DIMENSIONS).join(', ')}.`);
