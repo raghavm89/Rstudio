@@ -43,7 +43,14 @@ const leaseLost = () =>
 
 /** Stages that consume metered quota, and which meter they draw from. */
 const METERED = {
-  still:   { metric: 'still_megapixels', period: 'month', field: 'megapixels' },
+  // Content pieces draw the one CREDITS wallet, priced per piece by the rate
+  // card (creditCost.js). `fixed` means the charge does not reconcile against a
+  // measured field the way seconds did: a video is its rate-card price whether
+  // it came out 28s or 30s, so settle charges exactly what was reserved and a
+  // permanent failure returns exactly that. The supplier COST is still banked
+  // per job on render_jobs.cost_cents, so the self-hosting question stays a
+  // query by stage — it just no longer rides a per-unit usage counter.
+  still:   { metric: 'credits', period: 'month', fixed: true },
   // seed_still is deliberately ABSENT.
   //
   // It was here, drawing on `still_megapixels`, and that was wrong: this meter
@@ -73,8 +80,8 @@ const METERED = {
   // `cost_cents` on every job whatever its stage — so the self-hosting question
   // is `SUM(cost_cents) WHERE stage = 'calib_still'`. There is no usage counter
   // for it on purpose: a counter nobody enforces reads like a limit and is not.
-  motion:  { metric: 'video_seconds',    period: 'month', field: 'seconds_generated' },
-  lipsync: { metric: 'video_seconds',    period: 'month', field: 'seconds_generated' },
+  motion:  { metric: 'credits', period: 'month', fixed: true },
+  lipsync: { metric: 'credits', period: 'month', fixed: true },
   publish: { metric: 'publishes',        period: 'lifetime', field: null },
 };
 
@@ -171,9 +178,12 @@ async function failed(existing, workerId, { error, permanent }) {
   }
 
   // A permanently failed job releases the quota it reserved. A requeued one
-  // keeps it — the attempt will be retried and will cost again.
+  // keeps it — the attempt will be retried and will cost again. For a fixed
+  // credit piece the reserved amount IS the charge, so releasing it (actual = 0)
+  // returns the whole piece, and settle refunds its share of any purchased
+  // credits alongside.
   const meter = METERED[job.stage];
-  if (meter && meter.field && job.status === 'failed') {
+  if (meter && (meter.field || meter.fixed) && job.status === 'failed') {
     await inTransaction((client) => StudioUsage.settle(
       client, job.tenant_id, meter.metric,
       Number(existing.payload?._reserved || 0), 0, meter.period,
@@ -196,13 +206,20 @@ async function completed(existing, workerId, { result, seconds_generated, megapi
     // Reconcile the estimate against what it really used, and bank the cost so
     // the self-hosting decision is a query rather than a guess.
     const meter = METERED[job.stage];
-    if (meter && meter.field) {
-      const actual = Number(job[meter.field] || 0);
+    if (meter && (meter.field || meter.fixed)) {
+      // A fixed credit piece is charged exactly what it reserved — the rate-card
+      // price does not move with the seconds or megapixels it happened to
+      // produce. A metered (field) stage still reconciles estimate vs actual.
+      const reserved = Number(existing.payload?._reserved || 0);
+      const actual   = meter.fixed ? reserved : Number(job[meter.field] || 0);
       await StudioUsage.settle(
         client, job.tenant_id, meter.metric,
-        Number(existing.payload?._reserved || 0), actual, meter.period,
+        reserved, actual, meter.period,
         { fromCredits: Number(existing.payload?._from_credits || 0), reference: `job:${job.id}` }
       );
+      // Bank the supplier cost on the wallet counter so margin stays a query.
+      // Per-stage cost lives on render_jobs.cost_cents (written on every job),
+      // which is where the self-hosting breakdown by stage is read.
       await StudioUsage.addCost(client, job.tenant_id, meter.metric, Number(cost_cents || 0), meter.period);
     }
     return job;

@@ -71,15 +71,10 @@ async function plans(req, res) {
   const out = planRows.map((p) => {
     const key = planIdForLookup(p) === null ? 'null' : String(p.id);
     const rows = byPlan.get(key) || [];
-    const video = rows.find((r) => r.metric === 'video_seconds' && r.period === 'month');
-    const still = rows.find((r) => r.metric === 'still_megapixels' && r.period === 'month');
-
-    // The plan's credit allowance, from its entitlements — not a number typed
-    // into this file. One place decides what a plan grants.
-    const credits = creditPosition({
-      ...(video ? { video_seconds:    { used: 0, limit: Number(video.limit_value), period: 'month' } } : {}),
-      ...(still ? { still_megapixels: { used: 0, limit: Number(still.limit_value), period: 'month' } } : {}),
-    }).included;
+    // The plan's credit allowance IS its `credits` entitlement (migration 056) —
+    // one wallet, read straight off the row, not a number typed into this file.
+    const walletEnt = rows.find((r) => r.metric === 'credits' && r.period === 'month');
+    const credits = walletEnt ? Number(walletEnt.limit_value) : 0;
 
     return {
       slug:        p.slug,
@@ -104,7 +99,7 @@ async function plans(req, res) {
        */
       purchasable: Number(p.amount) === 0 ? false : Boolean(p.razorpay_plan_id),
       entitlements: rows
-        .filter((r) => r.metric !== 'video_seconds' && r.metric !== 'still_megapixels')
+        .filter((r) => !['credits', 'video_seconds', 'still_megapixels'].includes(r.metric))
         .map((r) => ({
           metric: r.metric,
           label:  LABELS[r.metric]?.label || r.metric,

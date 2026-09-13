@@ -24,7 +24,7 @@ export default function BillingPage() {
     <div className="page prof">
       <h1>Billing</h1>
       <p className="hint prof-deck">
-        One credit is one second of generated video. See{' '}
+        One credit is one photo; a video is about six. See{' '}
         <Link className="lnk" href="/usage">Usage</Link> for what you have spent.
         Prices exclude GST.
       </p>

@@ -39,10 +39,12 @@ test.before(async () => {
   LORA = l.rows[0].id;
 
   await pool.query(`INSERT INTO look_profiles (avatar_id) VALUES ($1)`, [AVATAR]);
-  // Generous allowances so orchestration tests are not fighting the free tier.
+  // Generous CREDIT wallet so orchestration tests are not fighting the free
+  // tier's 40. Content is metered in one `credits` wallet now (migration 056),
+  // not the per-unit video_seconds/still_megapixels counters.
   await pool.query(
     `INSERT INTO studio_entitlements (plan_id, metric, limit_value, period)
-     VALUES (NULL,'still_megapixels',100000,'month'), (NULL,'video_seconds',100000,'month')
+     VALUES (NULL,'credits',100000,'month')
      ON CONFLICT (metric, period) WHERE plan_id IS NULL DO UPDATE SET limit_value = EXCLUDED.limit_value`
   );
 });
@@ -53,10 +55,7 @@ test.after(async () => {
   await pool.query('DELETE FROM studio_usage_counters WHERE tenant_id = $1', [TENANT]);
   await pool.query('DELETE FROM avatars WHERE tenant_id = $1', [TENANT]);
   await pool.query(
-    `UPDATE studio_entitlements SET limit_value = 60 WHERE plan_id IS NULL AND metric = 'still_megapixels'`
-  );
-  await pool.query(
-    `UPDATE studio_entitlements SET limit_value = 240 WHERE plan_id IS NULL AND metric = 'video_seconds'`
+    `UPDATE studio_entitlements SET limit_value = 40 WHERE plan_id IS NULL AND metric = 'credits'`
   );
   await pool.end();
 });
@@ -175,8 +174,10 @@ test('a permanent failure blocks everything downstream instead of hanging it', a
 
 test('quota for the whole plan is reserved up front, and a refusal creates nothing', async () => {
   await reset();
+  // A 4-frame post is 4 stills = 4 credits (creditCost.js). Cap the wallet at 3
+  // and the whole shoot must be refused up front — one atomic reserve, not four.
   await pool.query(
-    `UPDATE studio_entitlements SET limit_value = 4 WHERE plan_id IS NULL AND metric = 'still_megapixels'`
+    `UPDATE studio_entitlements SET limit_value = 3 WHERE plan_id IS NULL AND metric = 'credits'`
   );
   try {
     await assert.rejects(
@@ -187,7 +188,7 @@ test('quota for the whole plan is reserved up front, and a refusal creates nothi
     assert.strictEqual(rows[0].n, 0, 'a refused shoot must not leave a half-created project behind');
   } finally {
     await pool.query(
-      `UPDATE studio_entitlements SET limit_value = 100000 WHERE plan_id IS NULL AND metric = 'still_megapixels'`
+      `UPDATE studio_entitlements SET limit_value = 100000 WHERE plan_id IS NULL AND metric = 'credits'`
     );
   }
 });

@@ -228,8 +228,7 @@ const StudioUsage = {
     const client = await pool.connect();
     try {
       const metrics = [
-        ['video_seconds', 'month'],
-        ['still_megapixels', 'month'],
+        ['credits', 'month'],
         ['publishes', 'lifetime'],
         ['avatars', 'lifetime'],
         ['faces_claimed', 'lifetime'],

@@ -229,16 +229,18 @@ async function resolveTenant() {
 
     const { rows: [avatar] } = await client.query(
       `INSERT INTO avatars (tenant_id, slug, name, mode, status, identity_block, avoid_block,
-                            lora_trigger, bible_version, disclosure_line)
-       VALUES ($1,$2,$3,$4,'draft',$5,$6,$7,$8,$9)
+                            lora_trigger, bible_version, disclosure_line, subject_type)
+       VALUES ($1,$2,$3,$4,'draft',$5,$6,$7,$8,$9,$10)
        ON CONFLICT (tenant_id, slug) DO UPDATE
          SET name = EXCLUDED.name, mode = EXCLUDED.mode,
              identity_block = EXCLUDED.identity_block, avoid_block = EXCLUDED.avoid_block,
              lora_trigger = EXCLUDED.lora_trigger, bible_version = EXCLUDED.bible_version,
-             disclosure_line = EXCLUDED.disclosure_line, updated_at = NOW()
+             disclosure_line = EXCLUDED.disclosure_line, subject_type = EXCLUDED.subject_type,
+             updated_at = NOW()
        RETURNING *`,
       [tenantId, fm.slug, fm.name, fm.mode, identity, avoid,
-       fm.lora_trigger, Number(fm.bible_version || 1), fm.disclosure_line || null]
+       fm.lora_trigger, Number(fm.bible_version || 1), fm.disclosure_line || null,
+       fm.subject_type || 'person']
     );
 
     const look = {

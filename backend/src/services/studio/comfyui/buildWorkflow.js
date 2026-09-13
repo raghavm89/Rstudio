@@ -70,6 +70,22 @@ const PROMPT_ORDER = [
   'quality',
 ];
 
+// A character's prompt keeps the shared shot facets (expression, light, framing)
+// but replaces the human LOOK block (camera/lens, grade, skin, asymmetry, hair)
+// with one STYLE block from its style profile.
+const CHARACTER_PROMPT_ORDER = [
+  'trigger',
+  'identity',
+  'wardrobe',
+  'location',
+  'pose',
+  'expression',
+  'style',
+  'light',
+  'framing',
+  'quality',
+];
+
 /**
  * Free-tier generations bill as 1 MP; paid as 2 MP and are upscaled server-side.
  *
@@ -196,6 +212,58 @@ function assemblePrompt({ avatar, lora, lookProfile, shot, scene, vocabulary, lo
 }
 
 /**
+ * Assemble the positive prompt for a CHARACTER (non-human) avatar.
+ *
+ * Same spine as `assemblePrompt` — identity block, LoRA trigger, shared shot
+ * facets, a quality tail — but the human look facets (lens, skin, grain,
+ * asymmetry, hair) do not exist for a personified fruit, so they are replaced by
+ * the style profile's illustration facets (render_style, palette, line_weight,
+ * shading, background). `skin`/`lens` are never required here; `render_style`
+ * and `framing` are.
+ */
+function assembleCharacterPrompt({ avatar, lora, styleProfile, shot, scene, vocabulary, locationText, wardrobeText }) {
+  if (!avatar || !avatar.identity_block || !avatar.identity_block.trim()) {
+    throw new WorkflowError('avatar.identity_block is empty — refusing to generate a characterless persona.');
+  }
+  if (!lora || !lora.trigger_token) {
+    throw new WorkflowError('No active LoRA for this avatar — train one before generating.');
+  }
+  if (!styleProfile) {
+    throw new WorkflowError('No style profile — it is frozen at setup and required for every generation.');
+  }
+
+  const vocab = indexVocabulary(vocabulary);
+
+  const parts = {
+    trigger:    lora.trigger_token,
+    identity:   avatar.identity_block.trim().replace(/\s+/g, ' '),
+    wardrobe:   wardrobeText || '',
+    location:   locationText || '',
+    pose:       shot.pose_key || '',
+    expression: fragment(vocab, 'expression', shot.expression_key || 'neutral'),
+    style:      [
+      fragment(vocab, 'render_style', styleProfile.render_style, { required: true }),
+      fragment(vocab, 'palette', styleProfile.palette),
+      fragment(vocab, 'line_weight', styleProfile.line_weight),
+      fragment(vocab, 'shading', styleProfile.shading),
+      fragment(vocab, 'background', styleProfile.background),
+    ].filter(Boolean).join(', '),
+    light:      lightingPhrase(vocab, shot, scene),
+    framing:    fragment(vocab, 'framing', shot.framing, { required: true }),
+    quality:    fragment(vocab, 'quality', 'base'),
+  };
+
+  const assembled = CHARACTER_PROMPT_ORDER
+    .map((k) => parts[k])
+    .map((s) => (s || '').trim())
+    .filter(Boolean)
+    .join(', ');
+
+  const append = sanitiseAppend(shot.advanced_append);
+  return append ? `${assembled}, ${append}` : assembled;
+}
+
+/**
  * Which expressions the prompt can actually produce.
  *
  * This used to be a hardcoded object in this file, and being the one prompt
@@ -289,10 +357,12 @@ function buildWorkflow(input) {
 module.exports = {
   buildWorkflow,
   assemblePrompt,
+  assembleCharacterPrompt,
   expressiblePresets,
   indexVocabulary,
   sanitiseAppend,
   WorkflowError,
   DIMENSIONS,
   PROMPT_ORDER,
+  CHARACTER_PROMPT_ORDER,
 };

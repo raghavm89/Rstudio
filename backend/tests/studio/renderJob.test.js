@@ -19,11 +19,23 @@ test.before(async () => {
   TENANT = rows[0].id;
   await pool.query('DELETE FROM render_jobs WHERE tenant_id = $1', [TENANT]);
   await pool.query('DELETE FROM studio_usage_counters WHERE tenant_id = $1', [TENANT]);
+  // Content is metered in one `credits` wallet (migration 056). These are
+  // machinery tests — atomic reserve, over-limit refusal, settle reconciliation,
+  // summary — so they run against `credits` with a fixed 240 fixture rather than
+  // the free tier's real 40, keeping the numbers below meaningful.
+  await pool.query(
+    `INSERT INTO studio_entitlements (plan_id, metric, limit_value, period)
+     VALUES (NULL,'credits',240,'month')
+     ON CONFLICT (metric, period) WHERE plan_id IS NULL DO UPDATE SET limit_value = EXCLUDED.limit_value`
+  );
 });
 
 test.after(async () => {
   await pool.query('DELETE FROM render_jobs WHERE tenant_id = $1', [TENANT]);
   await pool.query('DELETE FROM studio_usage_counters WHERE tenant_id = $1', [TENANT]);
+  await pool.query(
+    `UPDATE studio_entitlements SET limit_value = 40 WHERE plan_id IS NULL AND metric = 'credits'`
+  );
   await pool.end();
 });
 
@@ -215,12 +227,13 @@ test('a retried enqueue with the same idempotency key does not double-spend', as
 
 // ── Quota ─────────────────────────────────────────────────────────────────────
 
-test('free-tier video allowance is 240 generated seconds, not 180', async () => {
+test('the free-tier credit wallet resolves for a tenant with no subscription', async () => {
   const client = await pool.connect();
   try {
-    // 3 videos x 60s plus one re-roll of headroom. A user who dislikes the first
-    // result re-rolls, and every attempt is a full provider bill.
-    assert.strictEqual(await StudioUsage.limitFor(client, TENANT, 'video_seconds', 'month'), 240);
+    // A tenant with no subscription is a free-tier tenant; limitFor falls back to
+    // the plan_id IS NULL row. (Seeded to 240 above so the machinery tests have
+    // room; the product free wallet is 40 — see migration 056.)
+    assert.strictEqual(await StudioUsage.limitFor(client, TENANT, 'credits', 'month'), 240);
   } finally {
     client.release();
   }
@@ -230,14 +243,14 @@ test('reserving over the limit is refused AND does not consume the allowance', a
   await pool.query('DELETE FROM studio_usage_counters WHERE tenant_id = $1', [TENANT]);
   const client = await pool.connect();
   try {
-    await StudioUsage.reserve(client, TENANT, 'video_seconds', 200);
+    await StudioUsage.reserve(client, TENANT, 'credits', 200);
     await assert.rejects(
-      () => StudioUsage.reserve(client, TENANT, 'video_seconds', 100),
+      () => StudioUsage.reserve(client, TENANT, 'credits', 100),
       (err) => err.code === 'QUOTA_EXCEEDED' && err.remaining === 40
     );
     const { rows } = await client.query(
       `SELECT used FROM studio_usage_counters
-        WHERE tenant_id = $1 AND metric = 'video_seconds'
+        WHERE tenant_id = $1 AND metric = 'credits'
           AND period_start = date_trunc('month', NOW())::date`, [TENANT]
     );
     assert.strictEqual(Number(rows[0].used), 200, 'a refused reservation must roll itself back');
@@ -250,11 +263,11 @@ test('settle reconciles an estimate against what was actually generated', async 
   await pool.query('DELETE FROM studio_usage_counters WHERE tenant_id = $1', [TENANT]);
   const client = await pool.connect();
   try {
-    await StudioUsage.reserve(client, TENANT, 'video_seconds', 60);
-    await StudioUsage.settle(client, TENANT, 'video_seconds', 60, 45);
+    await StudioUsage.reserve(client, TENANT, 'credits', 60);
+    await StudioUsage.settle(client, TENANT, 'credits', 60, 45);
     const { rows } = await client.query(
       `SELECT used FROM studio_usage_counters
-        WHERE tenant_id = $1 AND metric = 'video_seconds'
+        WHERE tenant_id = $1 AND metric = 'credits'
           AND period_start = date_trunc('month', NOW())::date`, [TENANT]
     );
     assert.strictEqual(Number(rows[0].used), 45, 'a shorter render should give the seconds back');
@@ -269,7 +282,7 @@ test('concurrent reservations cannot both slip past the limit', async () => {
   const attempts = await Promise.allSettled(
     Array.from({ length: 4 }, async () => {
       const c = await pool.connect();
-      try { return await StudioUsage.reserve(c, TENANT, 'video_seconds', 80); }
+      try { return await StudioUsage.reserve(c, TENANT, 'credits', 80); }
       finally { c.release(); }
     })
   );
@@ -278,7 +291,7 @@ test('concurrent reservations cannot both slip past the limit', async () => {
 
   const { rows } = await pool.query(
     `SELECT used FROM studio_usage_counters
-      WHERE tenant_id = $1 AND metric = 'video_seconds'
+      WHERE tenant_id = $1 AND metric = 'credits'
         AND period_start = date_trunc('month', NOW())::date`, [TENANT]
   );
   assert.strictEqual(Number(rows[0].used), 240, 'the counter must never exceed the limit');
@@ -302,11 +315,11 @@ test('lifetime metrics use one bucket — one free publish, ever', async () => {
 test('usage summary reports remaining before it is spent', async () => {
   await pool.query('DELETE FROM studio_usage_counters WHERE tenant_id = $1', [TENANT]);
   const client = await pool.connect();
-  try { await StudioUsage.reserve(client, TENANT, 'video_seconds', 98); }
+  try { await StudioUsage.reserve(client, TENANT, 'credits', 98); }
   finally { client.release(); }
 
   const summary = await StudioUsage.summary(TENANT);
-  assert.strictEqual(summary.video_seconds.used, 98);
-  assert.strictEqual(summary.video_seconds.limit, 240);
-  assert.strictEqual(summary.video_seconds.remaining, 142, 'this is the number the sidebar meter shows');
+  assert.strictEqual(summary.credits.used, 98);
+  assert.strictEqual(summary.credits.limit, 240);
+  assert.strictEqual(summary.credits.remaining, 142, 'this is the number the sidebar meter shows');
 });

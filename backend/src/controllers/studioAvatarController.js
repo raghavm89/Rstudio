@@ -149,6 +149,7 @@ exports.create = async (req, res) => {
   const body = req.body || {};
   const name = Identity.normalise(body.name);
   const mode = String(body.mode || 'synthetic').trim();
+  const subjectType = String(body.subject_type || 'person').trim();
 
   const fields = {};
   if (!name) return res.status(400).json({ error: 'Give the avatar a name', fields: { name: 'Required.' } });
@@ -162,6 +163,24 @@ exports.create = async (req, res) => {
       message: 'An avatar is either synthetic — a person who does not exist — or a twin of the account holder. '
              + 'Generating a likeness of anyone else is not something this product does.',
       code: 'BAD_MODE',
+    });
+  }
+
+  // A character (a personified object, a mascot, a creature) depicts nobody, so
+  // it is always synthetic — there is no real person to be a twin OF. It takes
+  // the non-human pipeline downstream (CLIP-embedding QC, a style profile).
+  if (!['person', 'character'].includes(subjectType)) {
+    return res.status(400).json({
+      error: 'Unknown subject type',
+      message: 'An avatar is either a person or a character.',
+      code: 'BAD_SUBJECT_TYPE',
+    });
+  }
+  if (subjectType === 'character' && mode !== 'synthetic') {
+    return res.status(400).json({
+      error: 'A character has no one to be a twin of',
+      message: 'A character depicts nobody, so it can only be synthetic.',
+      code: 'CHARACTER_MUST_BE_SYNTHETIC',
     });
   }
 
@@ -203,11 +222,11 @@ exports.create = async (req, res) => {
     await StudioUsage.reserve(client, req.user.tenant_id, 'avatars', 1, 'lifetime', slug);
 
     const { rows } = await client.query(
-      `INSERT INTO avatars (tenant_id, slug, name, mode, status, identity_block, avoid_block, lora_trigger)
-       VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7)
+      `INSERT INTO avatars (tenant_id, slug, name, mode, subject_type, status, identity_block, avoid_block, lora_trigger)
+       VALUES ($1, $2, $3, $4, $5, 'draft', $6, $7, $8)
        ON CONFLICT (tenant_id, slug) DO NOTHING
-       RETURNING id, slug, name, mode, status, identity_block, lora_trigger, bible_version, created_at`,
-      [req.user.tenant_id, slug, name, mode, identity,
+       RETURNING id, slug, name, mode, subject_type, status, identity_block, lora_trigger, bible_version, created_at`,
+      [req.user.tenant_id, slug, name, mode, subjectType, identity,
        Identity.normalise(body.avoid_block) || Identity.DEFAULT_AVOID, trigger]
     );
 
@@ -221,16 +240,26 @@ exports.create = async (req, res) => {
     }
     const avatar = rows[0];
 
-    // The look profile is created with the avatar rather than lazily, because
-    // every default in it is a decision — lens, grain, colour — and a row that
-    // appears later appears with whatever the defaults were THEN.
-    const { rows: lookRows } = await client.query(
-      `INSERT INTO look_profiles (avatar_id) VALUES ($1)
-       ON CONFLICT (avatar_id) DO UPDATE SET updated_at = NOW()
-       RETURNING *`,
-      [avatar.id]
-    );
-    const look = lookRows[0];
+    // The profile is created with the avatar rather than lazily, because every
+    // default in it is a decision — and a row that appears later appears with
+    // whatever the defaults were THEN. A CHARACTER gets a style profile
+    // (illustration); a person gets a look profile (photography).
+    let look = null;
+    if (subjectType === 'character') {
+      await client.query(
+        `INSERT INTO style_profiles (avatar_id) VALUES ($1)
+         ON CONFLICT (avatar_id) DO UPDATE SET updated_at = NOW()`,
+        [avatar.id]
+      );
+    } else {
+      const { rows: lookRows } = await client.query(
+        `INSERT INTO look_profiles (avatar_id) VALUES ($1)
+         ON CONFLICT (avatar_id) DO UPDATE SET updated_at = NOW()
+         RETURNING *`,
+        [avatar.id]
+      );
+      look = lookRows[0];
+    }
 
     await client.query(
       `INSERT INTO studio_audit_log (tenant_id, user_id, action, entity, entity_id, avatar_id, meta, ip)
@@ -259,7 +288,13 @@ exports.create = async (req, res) => {
      */
     let generation = null;
     const wanted = body.generate;
-    if (wanted && wanted.count) {
+    if (wanted && wanted.count && subjectType === 'character') {
+      // Character seed generation (the CLIP-QC seed flow) is not built yet —
+      // Phase C ships the style profile; the seed vocabulary and the character
+      // embed/QC path are Phase B/D. The avatar and its style profile exist;
+      // its frames come later.
+      generation = { queued: 0, deferred: 'character_seed_generation' };
+    } else if (wanted && wanted.count) {
       const refusal = await Candidates.consentRefusal(avatar);
       if (refusal) {
         generation = { queued: 0, refused: refusal };

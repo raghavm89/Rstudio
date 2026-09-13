@@ -4,6 +4,7 @@ const pool        = require('../config/db');
 const RenderJob   = require('../models/renderJob');
 const StudioUsage = require('../models/studioUsage');
 const JobResult = require('../services/studio/jobResult');
+const { creditCostFor } = require('../services/studio/creditCost');
 const JobUpload = require('../services/studio/jobUpload');
 
 /**
@@ -108,7 +109,18 @@ exports.enqueue = async (req, res) => {
     // time it finishes the counters have moved on.
     let fromCredits = 0;
     if (meter) {
-      const amount = meter.field ? Number(estimate) : 1;
+      // A credit piece costs what the rate card says (creditCost.js): a still is
+      // 1, a generative clip is its seconds at the resolution's rate, a lipsync
+      // is flat by tier. A per-unit metered stage still reserves its estimate; a
+      // lifetime marker (publish) reserves one.
+      const amount = meter.metric === 'credits'
+        ? creditCostFor({
+            stage,
+            seconds:     Number(estimate) || 0,
+            resolution:  payload.resolution,
+            lipsyncTier: payload.lipsync_tier,
+          })
+        : (meter.field ? Number(estimate) : 1);
       const taken = await StudioUsage.reserve(client, tenantId, meter.metric, amount, meter.period);
       reserved = amount;
       fromCredits = Number(taken?.from_credits || 0);

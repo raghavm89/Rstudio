@@ -23,9 +23,14 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 
 const month = (used, limit) => ({ used, limit, period: 'month', cost_cents: 0 });
 
-test('a credit is a second of video', () => {
-  assert.strictEqual(RATES.video_seconds, 1,
-    'the anchor is the whole point: "240 credits" and "240 seconds" must be the same sentence');
+test('the wallet anchors on a still; the per-unit rates are build-time', () => {
+  // The settled anchor is 1 still = 1 credit (creditCost.js). RATES.credits is
+  // the wallet's own unit, 1:1, which is what lets CreditLedger.creditsFor map
+  // an over-wallet reservation straight onto purchased credits.
+  assert.strictEqual(RATES.credits, 1, 'the wallet unit must convert 1:1');
+  // The per-unit rates below are no longer the content rate card — they are the
+  // BUILD-time ledger conversions (seed frames, calibration, training).
+  assert.strictEqual(RATES.video_seconds, 1);
   assert.strictEqual(RATES.still_megapixels, 2);
 });
 
@@ -97,98 +102,113 @@ test('the usage page shows what actually constrains you', () => {
 });
 
 
-test('the landing page and the plans table quote the same prices', () => {
-  // They did not. The landing page said "Free · 240s of video" and "₹1,499
-  // Creator" while the plans table charged ₹12,000 for a plan called Pro — a
-  // disagreement a customer finds before you do.
+test('the landing page and the plans table quote the same wallets and prices', () => {
+  // They once disagreed — "Free · 240s" and "₹1,499 Creator" on the page while
+  // the app charged ₹12,000 for a plan called Pro. The landing is still
+  // hardcoded (a session-less server component), so this guards it against the
+  // plans it mirrors. Wallets are cross-checked against migration 056, their
+  // source; prices against the migrations that set them.
   const landing = read(path.join(FE, 'components', 'Landing.jsx'))
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');   // the comment explains the old numbers
-  const sql = read(path.join(ROOT, 'src', 'db', 'migrations', '041_repricing.sql'));
+  const dir = path.join(ROOT, 'src', 'db', 'migrations');
 
-  const paise = (slug) => {
-    const m = sql.match(new RegExp(`UPDATE plans SET amount = (\\d+) WHERE slug = '${slug}'`));
-    assert.ok(m, `no price for ${slug} in the repricing migration`);
-    return Number(m[1]) / 100;
-  };
+  // The wallets, read from the migration that grants them — not retyped here.
+  const sql056 = read(path.join(dir, '056_credit_wallet.sql'));
+  const wallets = {};
+  for (const m of sql056.matchAll(/\('(catalogue|pro|max|ultra)',\s*(\d+)/g)) wallets[m[1]] = Number(m[2]);
+  wallets.free = Number(sql056.match(/\(NULL, 'credits', (\d+), 'month'/)[1]);
+  assert.deepStrictEqual(
+    wallets, { catalogue: 150, pro: 220, max: 750, ultra: 1850, free: 40 },
+    'migration 056 is the source of the wallets the page must quote'
+  );
 
-  for (const [slug, shown] of [['pro', '₹2,000'], ['max', '₹6,000']]) {
-    const rupees = paise(slug);
-    assert.strictEqual(rupees.toLocaleString('en-IN'), shown.replace('₹', ''),
-      `${slug} is ${rupees} in the database`);
-    assert.ok(landing.includes(shown), `the landing page does not quote ${shown} for ${slug}`);
-  }
-  // Credit allowances too — the page quoted 1,200 and 4,000 until 042.
-  for (const shown of ['850 credits', '2,600 credits']) {
+  // Each wallet appears on the page, in en-IN formatting.
+  for (const n of Object.values(wallets)) {
+    const shown = `${n.toLocaleString('en-IN')} credits`;
     assert.ok(landing.includes(shown), `the landing page does not quote ${shown}`);
   }
 
-  // And the retired numbers must be gone from the visible copy.
-  for (const stale of ['1,499', '240s', '12,000', '1,200 credits', '4,000 credits',
-                       '1,000 credits', '3,200 credits', '880 credits', '2,800 credits']) {
+  // The five prices, cross-checked against the migrations that set them.
+  const p041 = read(path.join(dir, '041_repricing.sql'));
+  const p055 = read(path.join(dir, '055_frozen_offering_pricing.sql'));
+  assert.ok(p041.includes("amount = 200000 WHERE slug = 'pro'"), 'Pro is ₹2,000 in 041');
+  assert.ok(p055.includes("amount = 700000 WHERE slug = 'max'"), 'Max is ₹7,000 in 055');
+  assert.ok(p055.includes('99900'),   'Catalogue is ₹999 in 055');
+  assert.ok(p055.includes('1500000'), 'Ultra is ₹15,000 in 055');
+  for (const shown of ['Free', '₹999', '₹2,000', '₹7,000', '₹15,000']) {
+    assert.ok(landing.includes(shown), `the landing page does not quote ${shown}`);
+  }
+
+  // The plain-English guide the wallet needs: what a credit buys, and the top-up.
+  assert.match(landing, /one credit is one photo/i, 'the page must say what a credit buys');
+  assert.ok(landing.includes('77 credits'), 'the top-up is ₹500 for 77 credits now');
+
+  // Retired copy must be gone. FULL phrases, so "1,850 credits" (Ultra) does not
+  // trip a bare "850 credits" check — it contains it as a substring.
+  for (const stale of ['Pro · 850 credits', 'Max · 2,600 credits', '₹6,000',
+                       'one second of generated video', 'for 210 credits']) {
     assert.ok(!landing.includes(stale), `the landing page still shows the retired "${stale}"`);
   }
 });
 
-test('the credit allowances are the ones the prices can carry', () => {
-  // 041 set Pro at 1,200 and Max at 4,000, which at full utilisation on
-  // generative video was -16% and -29% — plans that lost more the better they
-  // sold. 042 cut the allowances to the prices rather than the other way round.
-  // Always the newest repricing migration, so this does not quietly keep
-  // checking an allowance that has since been superseded.
+test('the credit wallets are the ones the prices can carry', () => {
+  // The old per-unit allowances were tuned so full generative use cleared a
+  // margin floor. The per-piece wallet keeps the same discipline against a
+  // simpler basis: a credit is priced at ≈ ₹4.50 of supplier cost (the still it
+  // is anchored on), so a plan's worst-case spend is its wallet × that. Raise a
+  // wallet without the price and this fails, instead of shipping a plan that
+  // loses more the better it sells.
   const dir = path.join(ROOT, 'src', 'db', 'migrations');
-  const latest = fs.readdirSync(dir)
-    .filter((f) => /video_seconds/.test(read(path.join(dir, f))) && /studio_entitlements e SET/.test(read(path.join(dir, f))))
-    .sort()
-    .pop();
-  assert.ok(latest, 'no repricing migration found');
-  const sql = read(path.join(dir, latest));
+  const sql056 = read(path.join(dir, '056_credit_wallet.sql'));
+  const wallet = {};
+  for (const m of sql056.matchAll(/\('(catalogue|pro|max|ultra)',\s*(\d+)/g)) wallet[m[1]] = Number(m[2]);
+  wallet.free = Number(sql056.match(/\(NULL, 'credits', (\d+), 'month'/)[1]);
 
-  // The exchange rate is an ASSUMPTION and the one input nobody controls. It is
-  // named here so a margin check can never silently pass at a rate the business
-  // stopped using — 042's grants were fine at ₹88 and −14% at ₹100.
-  const FX = 100, GEN = 0.022, STILL = 0.035;
-  const grants = {};
-  for (const m of sql.matchAll(/\('(pro|max)',\s*'(video_seconds|still_megapixels)',\s*(\d+)/g)) {
-    (grants[m[1]] ||= {})[m[2]] = Number(m[3]);
-  }
+  // The settled wallets — asserted so the copy, the migration and the model
+  // cannot silently diverge.
+  assert.deepStrictEqual(wallet, { catalogue: 150, pro: 220, max: 750, ultra: 1850, free: 40 });
 
-  for (const [slug, price, floor] of [['pro', 2000, 0.03], ['max', 6000, -0.02]]) {
-    const g = grants[slug];
-    assert.ok(g?.video_seconds && g?.still_megapixels, `no entitlements for ${slug}`);
-    const cost = g.video_seconds * GEN * FX + g.still_megapixels * STILL * FX;
-    const margin = (price - cost) / price;
+  // COST_PER_CREDIT is the ASSUMPTION nobody controls — named so a margin check
+  // cannot quietly pass at a cost the rate card stopped using.
+  const COST_PER_CREDIT = 4.5;
+  const price = { catalogue: 999, pro: 2000, max: 7000, ultra: 15000 };
+  for (const slug of Object.keys(price)) {
+    const cost   = wallet[slug] * COST_PER_CREDIT;
+    const margin = (price[slug] - cost) / price[slug];
     assert.ok(
-      margin >= floor,
-      `${slug} is ${(margin * 100).toFixed(1)}% at full generative use — below the ${(floor * 100)}% floor`
+      margin >= 0.30,
+      `${slug} is ${(margin * 100).toFixed(1)}% at full spend — below the 30% floor`
     );
   }
-
-  // And credits = video + 2 × megapixels, which is what the rate card says.
-  const credits = (g) => g.video_seconds + 2 * g.still_megapixels;
-  assert.strictEqual(credits(grants.pro), 850);
-  assert.strictEqual(credits(grants.max), 2600);
 });
 
-test('the free tier still budgets a re-roll', () => {
-  // The pricing doc budgets a wasted generation on purpose. Whatever the
-  // allowance becomes, the copy must describe a video length that leaves room
-  // for one — otherwise the first person to re-roll loses a third of their
-  // month and concludes the product is stingy rather than that they misprompted.
+test('the free wallet is exactly its advertised bundle at the rate card', () => {
+  // The old free tier budgeted a wasted generation into a SECONDS allowance.
+  // The per-piece wallet replaced that (migration 056): the free 40 credits IS
+  // five budget videos and ten stills at the rate card — 5×6 + 10×1 — which is
+  // why the card can say "~5 videos + 10 stills" and mean it. If the wallet or a
+  // rate moves, this is where that copy stops being true.
+  const { creditCostFor } = require('../src/services/studio/creditCost');
   const dir = path.join(ROOT, 'src', 'db', 'migrations');
   const latest = fs.readdirSync(dir)
-    .filter((f) => /plan_id IS NULL AND metric = 'video_seconds'/.test(read(path.join(dir, f))))
+    .filter((f) => /\(NULL, 'credits', \d+, 'month'/.test(read(path.join(dir, f))))
     .sort().pop();
+  assert.ok(latest, 'no migration seeds a free credit wallet');
   const sql = read(path.join(dir, latest));
 
-  const secs = Number(sql.match(/limit_value = (\d+),[\s\S]{0,140}?video_seconds/)[1]);
-  const m = sql.match(/(\d+) videos up to (\d+)s, plus one re-roll/);
-  assert.ok(m, `${latest} must say how the free seconds are meant to be spent`);
+  // Match the FREE row specifically — the wallet and the bundle note on one
+  // line — so the catalogue row's note two lines up cannot stand in for it.
+  const free = sql.match(/\(NULL, 'credits', (\d+), 'month', '~(\d+) videos \+ (\d+) stills'/);
+  assert.ok(free, `${latest} must seed a free credit wallet with a bundle note`);
+  const wallet = Number(free[1]);
+  const videos = Number(free[2]);
+  const stills = Number(free[3]);
 
-  const [, count, length] = m.map(Number);
-  const needed = (count + 1) * length;    // the videos, plus one wasted take
-  assert.ok(
-    needed <= secs,
-    `${count} × ${length}s plus a re-roll needs ${needed}s but the tier grants ${secs}s`
+  const bundle = videos * creditCostFor({ stage: 'lipsync', lipsyncTier: 'budget' })
+               + stills * creditCostFor({ stage: 'still' });
+  assert.strictEqual(
+    bundle, wallet,
+    `the free copy promises ${videos} videos + ${stills} stills = ${bundle} credits, but the wallet grants ${wallet}`
   );
 });
 

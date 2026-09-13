@@ -56,6 +56,15 @@
  *   lora_trainings     ₹200 flat at fal → 120 credits (₹282).
  */
 const RATES = {
+  /**
+   * The content wallet's own unit. A credit is a credit, so its overage and
+   * refund conversions (CreditLedger.creditsFor) are 1:1 — this is what lets the
+   * one metric-agnostic reserve/settle path meter the wallet directly. The
+   * per-piece rate card that turns a render into credits lives in creditCost.js;
+   * the per-unit rates below are the BUILD-time ledger conversions (seed frames,
+   * calibration, training), not the content wallet.
+   */
+  credits:           1,
   video_seconds:     1,
   still_megapixels:  2,
   /** Per training run. One run, one charge, whatever it costs us to retry it. */
@@ -70,6 +79,7 @@ const RATES = {
 
 /** How each metric reads on a page, so the UI does not invent its own names. */
 const LABELS = {
+  credits:          { label: 'Credits',         unit: ''   },
   video_seconds:    { label: 'Video',           unit: 's'  },
   still_megapixels: { label: 'Stills',          unit: 'MP' },
   publishes:        { label: 'Posts published', unit: ''   },
@@ -92,6 +102,34 @@ const round = (n) => Math.round(Number(n) * 100) / 100;
  * folding them in would make a credit mean two different things.
  */
 function creditPosition(summary = {}) {
+  /**
+   * Wallet-first. The enforced monthly balance is now a single `credits` metric
+   * (migration 056) — one currency the customer spends per piece. When it is
+   * present it IS the position; there is nothing to derive.
+   */
+  const wallet = summary.credits;
+  if (wallet && wallet.period === 'month') {
+    const included = Number(wallet.limit ?? 0);
+    const used     = Number(wallet.used ?? 0);
+    return {
+      included:  round(included),
+      used:      round(used),
+      remaining: round(Math.max(0, included - used)),
+      breakdown: [{
+        metric:        'credits',
+        label:         LABELS.credits?.label ?? 'Credits',
+        unit:          '',
+        rate:          1,
+        units_used:    round(used),
+        units_limit:   round(included),
+        credits:       round(used),
+        credits_limit: round(included),
+      }],
+    };
+  }
+
+  // Legacy fallback: derive credits from the per-unit meters, for any caller
+  // still passing a pre-wallet summary (kept so nothing breaks mid-migration).
   const breakdown = [];
   let used = 0;
   let included = 0;

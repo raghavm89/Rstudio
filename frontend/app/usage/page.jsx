@@ -44,9 +44,9 @@ function Usage({ credits, usage }) {
     <div className="page prof">
       <h1>Usage</h1>
       <p className="hint prof-deck">
-        One credit is one second of generated video; a megapixel of stills is two.
-        Generation is metered, not the finished post — a frame you reject cost the
-        same as one you keep.
+        One credit is one photo; a video is about six. You're charged when a piece
+        is generated, not when you post it — a reshoot you don't use still spends
+        its credits.
       </p>
 
       <section className="card prof-card">

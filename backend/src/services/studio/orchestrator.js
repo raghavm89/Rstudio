@@ -4,6 +4,7 @@ const pool         = require('../../config/db');
 const RenderJob    = require('../../models/renderJob');
 const StudioUsage  = require('../../models/studioUsage');
 const RunnerPolicy = require('./runnerPolicy');
+const { creditCostFor } = require('./creditCost');
 
 /**
  * The one click.
@@ -35,7 +36,7 @@ const CANDIDATES = { free: 1, paid: 4 };
 
 const SECONDS_PER_CLIP = 5;
 
-function planFor({ kind, frameCount, clipSeconds, intent = 'cloud' }) {
+function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution = '480p' }) {
   const stages = [];
   let step = 0;
   // Runners come from the licence policy, not from literals here. See
@@ -46,7 +47,8 @@ function planFor({ kind, frameCount, clipSeconds, intent = 'cloud' }) {
   stages.push({ key: 'prompt', stage: 'prompt', runner: runner('prompt'), label: 'Working out the shots', step: step++ });
 
   for (let i = 1; i <= frameCount; i += 1) {
-    stages.push({ key: `still:${i}`, stage: 'still', runner: runner('still'), after: ['prompt'], label: `Photo ${i}`, step: step });
+    stages.push({ key: `still:${i}`, stage: 'still', runner: runner('still'), after: ['prompt'], label: `Photo ${i}`, step: step,
+      meter: { metric: 'credits', amount: creditCostFor({ stage: 'still' }) } });
     stages.push({ key: `qc:${i}`, stage: 'qc', runner: runner('qc'), after: [`still:${i}`], label: `Checking photo ${i}`, step: step });
   }
   step += 1;
@@ -56,7 +58,11 @@ function planFor({ kind, frameCount, clipSeconds, intent = 'cloud' }) {
       stages.push({
         key: `motion:${i}`, stage: 'motion', runner: runner('motion'), after: [`qc:${i}`],
         label: `Bringing photo ${i} to life`, step,
-        meter: { metric: 'video_seconds', amount: clipSeconds },
+        // Seconds drive the render; credits drive the wallet. A generative reel
+        // is priced per second (creditCost.js), so a clip's credits are its
+        // seconds at the resolution's rate — the parts sum to the 30s anchor.
+        seconds: clipSeconds,
+        meter: { metric: 'credits', amount: creditCostFor({ stage: 'motion', seconds: clipSeconds, resolution }) },
       });
     }
     step += 1;
@@ -98,6 +104,7 @@ const Orchestrator = {
     tenantId, avatarId, userId = null, kind = 'post', frameCount = 4,
     brief = {}, shots = [], scene = {}, tier = 'free',
     clipSeconds = SECONDS_PER_CLIP, idempotencyKey = null, intent = 'cloud',
+    resolution = '480p',
   }) {
     if (!tenantId) throw Object.assign(new Error('tenantId is required'), { status: 400 });
     if (!avatarId) throw Object.assign(new Error('avatarId is required'), { status: 400 });
@@ -110,7 +117,7 @@ const Orchestrator = {
 
     const quality    = QUALITY_BY_PLAN[tier] || '1mp';
     const candidates = CANDIDATES[tier] || 1;
-    const { stages, stepTotal } = planFor({ kind, frameCount, clipSeconds, intent });
+    const { stages, stepTotal } = planFor({ kind, frameCount, clipSeconds, intent, resolution });
 
     const client = await pool.connect();
     try {
@@ -188,17 +195,15 @@ const Orchestrator = {
       }
 
       // ── Quota, before any job exists ───────────────────────────────────────
-      // Reserved for the whole plan in one go. Reserving per stage would let a
+      // One wallet, one currency. Every rendered piece costs credits per the
+      // rate card (creditCost.js), carried on its stage's `meter`. The whole
+      // shoot is reserved in one atomic call — reserving per stage would let a
       // shoot get half-queued and then refused, leaving orphan jobs and a
-      // partially-spent allowance.
-      const stillMp = frameCount * candidates * (quality === '1mp' ? 1 : 2);
-      const stillTake = await StudioUsage.reserve(client, tenantId, 'still_megapixels', stillMp);
-
-      const videoSeconds = stages
-        .filter((s) => s.meter?.metric === 'video_seconds')
-        .reduce((n, s) => n + s.meter.amount, 0);
-      const videoTake = videoSeconds
-        ? await StudioUsage.reserve(client, tenantId, 'video_seconds', videoSeconds)
+      // partially-spent wallet.
+      const creditStages = stages.filter((s) => s.meter?.metric === 'credits');
+      const totalCredits = creditStages.reduce((n, s) => n + Number(s.meter.amount || 0), 0);
+      const creditTake = totalCredits
+        ? await StudioUsage.reserve(client, tenantId, 'credits', totalCredits)
         : null;
 
       /**
@@ -208,20 +213,15 @@ const Orchestrator = {
        * so a shoot cannot get half-queued and then refused. But settlement
        * happens per job, and a job refunds only what its own payload says it
        * spent. Without this, a shoot that dipped into bought credits and then
-       * came in under its estimate would keep the difference: the counter would
-       * be reconciled and the credits would not.
+       * had a piece fail would keep that piece's share of the purchase.
        *
-       * Proportional to each job's own reservation, so the parts sum to the
+       * Proportional to each job's own credit cost, so the parts sum to the
        * whole and no job can refund more than its share.
        */
-      const creditPool = {
-        still_megapixels: { total: stillMp, credits: Number(stillTake?.from_credits || 0) },
-        video_seconds:    { total: videoSeconds, credits: Number(videoTake?.from_credits || 0) },
-      };
-      const shareOfCredits = (metric, reserved) => {
-        const pool = creditPool[metric];
-        if (!pool || !pool.credits || !pool.total) return 0;
-        return Math.round((pool.credits * (Number(reserved) / pool.total)) * 100) / 100;
+      const purchasedCredits = Number(creditTake?.from_credits || 0);
+      const shareOfCredits = (amount) => {
+        if (!purchasedCredits || !totalCredits) return 0;
+        return Math.round((purchasedCredits * (Number(amount) / totalCredits)) * 100) / 100;
       };
 
       // ── The job graph ──────────────────────────────────────────────────────
@@ -245,14 +245,13 @@ const Orchestrator = {
             avatar_id: avatarId,
             lora_id: avatar.lora_id,
             scene_id: sceneRow.id,
+            subject_type: avatar.subject_type,
             quality,
             candidates,
-            clip_seconds: spec.meter?.amount ?? null,
-            _reserved: spec.meter?.amount ?? (spec.stage === 'still' ? candidates * (quality === '1mp' ? 1 : 2) : 0),
-            _from_credits: shareOfCredits(
-              spec.meter?.metric ?? (spec.stage === 'still' ? 'still_megapixels' : null),
-              spec.meter?.amount ?? (spec.stage === 'still' ? candidates * (quality === '1mp' ? 1 : 2) : 0)
-            ),
+            clip_seconds: spec.seconds ?? null,
+            resolution,
+            _reserved: spec.meter?.metric === 'credits' ? Number(spec.meter.amount || 0) : 0,
+            _from_credits: spec.meter?.metric === 'credits' ? shareOfCredits(spec.meter.amount) : 0,
           },
           idempotency_key: idempotencyKey ? `${idempotencyKey}:${spec.key}` : null,
         });
@@ -267,7 +266,7 @@ const Orchestrator = {
         shots: shotRows,
         job_count: byKey.size,
         step_total: stepTotal,
-        reserved: { still_megapixels: stillMp, video_seconds: videoSeconds },
+        reserved: { credits: totalCredits },
       };
     } catch (err) {
       await client.query('ROLLBACK');

@@ -27,6 +27,30 @@ const pool = require('../../config/db');
 // reject everything on day one.
 const UNCALIBRATED_FLOOR = 0.60;
 
+/**
+ * Which embedder measures identity, by avatar subject type.
+ *
+ *   person    → a FACE embedding (insightface/ArcFace); this whole module's
+ *               thresholds and the 0.60 floor are ArcFace numbers.
+ *   character → a WHOLE-IMAGE (CLIP) embedding, because a personified fruit has
+ *               no face to detect. The cosine judgement below is identical — CLIP
+ *               vectors compare by angle too — but the floor/baseline must be
+ *               re-tuned for CLIP's distribution (Phase B; see
+ *               claude/character-line-scope.md, CA5).
+ *
+ * The worker reads this to pick its extractor; the judgement here reads
+ * `subjectType` to skip the face-only structural rejects for a character.
+ */
+const EMBEDDER_BY_SUBJECT = {
+  person:    'insightface',
+  character: 'clip',
+};
+
+/** The extractor name for a subject type, defaulting to the person path. */
+function embedderFor(subjectType) {
+  return EMBEDDER_BY_SUBJECT[subjectType] || EMBEDDER_BY_SUBJECT.person;
+}
+
 const REJECT = {
   BELOW_BASELINE: 'below_baseline',
   NO_FACE: 'no_face',
@@ -116,6 +140,8 @@ const FaceQc = {
   meanEmbedding,
   REJECT,
   UNCALIBRATED_FLOOR,
+  EMBEDDER_BY_SUBJECT,
+  embedderFor,
 
   /**
    * Judge one candidate.
@@ -127,17 +153,26 @@ const FaceQc = {
   async evaluate({
     avatarId, loraId, presetKey = 'neutral', framing = 'medium',
     embedding, referenceEmbedding, detections = {}, aspect = null, expectedAspect = null,
+    subjectType = 'person',
   }) {
     const client = await pool.connect();
     try {
-      if (detections.faceCount === 0) {
-        return { pass: false, reason: REJECT.NO_FACE, similarity: null };
-      }
-      if (detections.faceCount > 1) {
-        return { pass: false, reason: REJECT.MULTIPLE_FACES, similarity: null };
-      }
-      if (detections.malformedHands) {
-        return { pass: false, reason: REJECT.MALFORMED_HANDS, similarity: null };
+      // The face-count and hand rejects come from a FACE detector, which never
+      // runs for a character — a personified fruit has no face, and reporting
+      // zero faces would auto-reject every good frame. For a character, identity
+      // rides on the whole-image (CLIP) similarity below alone. The aspect and
+      // text-artifact rejects are generic image-quality checks and apply to both.
+      const isCharacter = subjectType === 'character';
+      if (!isCharacter) {
+        if (detections.faceCount === 0) {
+          return { pass: false, reason: REJECT.NO_FACE, similarity: null };
+        }
+        if (detections.faceCount > 1) {
+          return { pass: false, reason: REJECT.MULTIPLE_FACES, similarity: null };
+        }
+        if (detections.malformedHands) {
+          return { pass: false, reason: REJECT.MALFORMED_HANDS, similarity: null };
+        }
       }
       if (detections.textArtifact) {
         return { pass: false, reason: REJECT.TEXT_ARTIFACT, similarity: null };

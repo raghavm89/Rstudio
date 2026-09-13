@@ -208,29 +208,40 @@ export default function Landing({ assets = null }) {
               </Link>
             </div>
           </div>
-          {/* Three prices, and they are the ones in the plans table — not a
-              second set typed here. This block said "Free · 240s" and "₹1,499
-              Creator" while the app charged ₹12,000 for a plan called Pro, which
-              is the kind of disagreement a customer finds before you do.
+          {/* Five plans, and they are the ones in the plans table — not a
+              second set typed here. This block once said "Free · 240s" and
+              "₹1,499 Creator" while the app charged ₹12,000 for a plan called
+              Pro, which is the kind of disagreement a customer finds before you
+              do. It now quotes the monthly CREDIT WALLET each plan grants
+              (migrations 055 + 056) — the per-piece model, not seconds.
 
               Still hardcoded, because the landing page is a server component
               rendered without a session and the plans endpoint needs one. Worth
               moving to a public endpoint the moment these numbers change again;
               flagged here so the next person editing prices knows there are two
-              places until then. */}
+              places until then — and credits.test.js guards the two against
+              drift. */}
           <div className="lp-close-right">
             <div className="lp-price">
               Free
-              <small>1 persona · 3 videos a month · 15 stills</small>
-            </div>
-            <div className="lp-price" style={{ fontSize: 30 }}>
-              ₹2,000<small>Pro · 850 credits a month</small>
+              <small>40 credits a month · ≈ 5 videos + 10 photos</small>
             </div>
             <div className="lp-price" style={{ fontSize: 22 }}>
-              ₹6,000<small>Max · 2,600 credits a month</small>
+              ₹999<small>Catalogue · 150 credits · ≈ 20 videos + 30 photos</small>
+            </div>
+            <div className="lp-price" style={{ fontSize: 22 }}>
+              ₹2,000<small>Pro · 220 credits · ≈ 30 videos + 40 photos</small>
+            </div>
+            <div className="lp-price" style={{ fontSize: 22 }}>
+              ₹7,000<small>Max · 750 credits · ≈ 100 videos + 150 photos</small>
+            </div>
+            <div className="lp-price" style={{ fontSize: 22 }}>
+              ₹15,000<small>Ultra · 1,850 credits · ≈ 250 videos + 350 photos</small>
             </div>
             <p className="lp-price-note">
-              One credit is one second of generated video. Top up at ₹500 for 210 credits.
+              One credit is one photo; a video is about six. Each plan is a
+              monthly credit wallet you spend however you like — trade photos for
+              videos as you please. Top up any time at ₹500 for 77 credits.
             </p>
           </div>
         </section>
