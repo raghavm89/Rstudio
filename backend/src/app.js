@@ -177,6 +177,18 @@ if (process.env.NODE_ENV !== 'test' && process.env.STUDIO_EMBED_RUNNER !== 'off'
     EmbedRunner.start();
     console.log('[studio] checking seed sets in this process');
   });
+
+  const { QcRunner } = require('./services/studio/qcRunner');
+  QcRunner.ready().then((ready) => {
+    if (!ready) {
+      QcRunner.reason().then((why) => console.warn(
+        `[studio] this machine cannot QC faces (${why}) — shoot QC will `
+        + 'queue until a worker with insightface is running'));
+      return;
+    }
+    QcRunner.start();
+    console.log('[studio] QC-ing shoot frames in this process');
+  });
 }
 
 app.use((req, res) => res.status(404).json({ error: 'Route not found' }));

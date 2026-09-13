@@ -152,10 +152,16 @@ external lead time, not code.
    still now records its frames as `studio_assets` and feeds the first frame to
    its motion job as `generation.image_url` (`shootAssets.js`), so image-to-video
    has an input. **Still needed before a video shoot runs end-to-end on real
-   pixels:** (a) the `qc` stage has no executor — embed each candidate, faceQc-judge
-   against the calibrated baseline, mark the winner `selected`, and re-point the
-   motion input at it (`faceQc.js` is the judge; wiring + the embedder call are
-   unbuilt); (b) no handler for the `voice` stage.
+   pixels:** the `qc` stage now has an executor (**DONE** — `qcStage.js` +
+   `qcRunner.js`): it measures each candidate (insightface, injectable), judges
+   via `faceQc` against the calibrated baseline, writes verdicts onto the
+   assets, marks the winner `selected`, and re-points motion at it; if nothing
+   passes it fails the shot and blocks the motion (no animating a rejected
+   face). Mirrors the embed runner — runs wherever insightface is, defers
+   gracefully where it isn't, so the real face measurement runs on the Mac.
+   **Still open:** (b) no handler for the `voice` stage (needed only when a shoot
+   has a voiceover track); and the first real end-to-end video run on the Mac
+   (embedder + fal), which is where any remaining surprises will surface.
 
 **Lane 3 — close the offering**
 8. Realtime per-minute price + provider _(you)_; confirm the cost estimates.
