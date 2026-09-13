@@ -4,6 +4,7 @@ const LoraTraining = require('../services/studio/loraTraining');
 const Calibration  = require('../services/studio/calibration');
 const CalibrationRun = require('../services/studio/calibrationRun');
 const LookProfile  = require('../services/studio/lookProfile');
+const { currentPlanFor } = require('./studioPlansController');
 const StudioUsage  = require('../models/studioUsage');
 const Identity     = require('../services/studio/identityBlock');
 const SeedBatch    = require('../services/studio/seedBatch');
@@ -182,6 +183,24 @@ exports.create = async (req, res) => {
       message: 'A character depicts nobody, so it can only be synthetic.',
       code: 'CHARACTER_MUST_BE_SYNTHETIC',
     });
+  }
+
+  // Custom avatars — a person OR a character — start at Pro (offering §1). Free
+  // and Catalogue use the SHARED catalogue only (they adopt a built avatar via
+  // /catalogue/:id/select, they do not build their own). Admins are exempt
+  // because building catalogue content for everyone is their job.
+  if (req.user.role !== 'admin') {
+    const plan = await currentPlanFor(req.user.tenant_id);
+    const slug = plan?.slug || 'free';
+    if (!['pro', 'max', 'ultra'].includes(slug)) {
+      return res.status(403).json({
+        error: 'Custom avatars start at Pro',
+        message: subjectType === 'character'
+          ? 'Building your own character is a Pro feature. On Free and Catalogue you can pick a ready-made avatar or character from the catalogue.'
+          : 'Building your own avatar is a Pro feature. On Free and Catalogue you can pick a ready-made avatar from the catalogue.',
+        code: 'CUSTOM_REQUIRES_PRO',
+      });
+    }
   }
 
   const identity = Identity.normalise(

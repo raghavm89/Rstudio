@@ -27,7 +27,7 @@ const Catalogue = {
   async listPublished(client, { region = null } = {}) {
     const { rows } = await client.query(
       `SELECT a.id, a.slug, a.name, a.catalogue_region AS region,
-              a.identity_block, a.disclosure_line,
+              a.identity_block, a.disclosure_line, a.subject_type,
               a.voice_provider, a.voice_id,
               (l.id IS NOT NULL) AS ready,
               a.catalogue_published_at

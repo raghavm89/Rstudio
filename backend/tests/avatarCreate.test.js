@@ -270,3 +270,14 @@ test('one avatar is fetched tenant-scoped, and a stranger\'s looks missing', () 
   assert.ok(rulesAt > -1 && idAt > -1, 'both routes must exist to be ordered');
   assert.ok(rulesAt < idAt, '/avatars/rules must be registered before /avatars/:id');
 });
+
+
+test('custom avatars — person or character — are gated to Pro+ (offering §1)', () => {
+  // Free and Catalogue use the shared catalogue only; building your own avatar
+  // or character starts at Pro. Enforced in the API, not just the UI.
+  const src = strip(read(path.join(ROOT, 'src', 'controllers', 'studioAvatarController.js')));
+  assert.match(src, /currentPlanFor/, 'creation must resolve the tenant plan');
+  assert.match(src, /CUSTOM_REQUIRES_PRO/, 'a non-Pro tenant is refused a custom build');
+  assert.match(src, /'pro', 'max', 'ultra'/, 'only Pro and up may build custom');
+  assert.match(src, /req\.user\.role !== 'admin'/, 'admins (catalogue builders) are exempt');
+});
