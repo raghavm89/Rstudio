@@ -159,9 +159,13 @@ external lead time, not code.
    passes it fails the shot and blocks the motion (no animating a rejected
    face). Mirrors the embed runner — runs wherever insightface is, defers
    gracefully where it isn't, so the real face measurement runs on the Mac.
-   **Still open:** (b) no handler for the `voice` stage (needed only when a shoot
-   has a voiceover track); and the first real end-to-end video run on the Mac
-   (embedder + fal), which is where any remaining surprises will surface.
+   The **`voice` stage now has a handler** too (`voiceStage.js`: reads the brief's
+   line + the avatar's locked voice, ElevenLabs TTS, stores the audio for
+   assemble). So the **video DAG is fully wired in code end to end** — prompt →
+   still → record → QC-select → motion → voice → assemble → copy, every stage
+   with an executor. **The one thing left is the first real end-to-end run on
+   the Mac** (insightface + a FAL_KEY + an ElevenLabs key), which is where any
+   remaining real-pixel surprises will surface.
 
 **Lane 3 — close the offering**
 8. Realtime per-minute price + provider _(you)_; confirm the cost estimates.

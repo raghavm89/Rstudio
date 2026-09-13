@@ -5,6 +5,7 @@ const RenderJob   = require('../../models/renderJob');
 const PromptStage = require('./promptStage');
 const AssembleStage = require('./assembleStage');
 const CopyStage = require('./copyStage');
+const VoiceStage = require('./voiceStage');
 
 /**
  * Runs the `server` stages in the API process.
@@ -29,6 +30,7 @@ const CopyStage = require('./copyStage');
 
 const HANDLERS = {
   prompt:   (job) => PromptStage.execute(job),
+  voice:    (job) => VoiceStage.execute(job),
   assemble: (job) => AssembleStage.execute(job),
   copy:     (job) => CopyStage.execute(job),
 };
