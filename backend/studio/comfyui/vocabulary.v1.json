@@ -1,0 +1,262 @@
+[
+  {
+    "facet": "asymmetry",
+    "option_key": "off",
+    "fragment": ""
+  },
+  {
+    "facet": "asymmetry",
+    "option_key": "on",
+    "fragment": "natural facial asymmetry, slightly uneven features"
+  },
+  {
+    "facet": "base_look",
+    "option_key": "clean_digital",
+    "fragment": "neutral digital capture, high micro-contrast"
+  },
+  {
+    "facet": "base_look",
+    "option_key": "editorial",
+    "fragment": "clean editorial lighting, low colour noise, magazine finish"
+  },
+  {
+    "facet": "base_look",
+    "option_key": "grainy_street",
+    "fragment": "available light, candid street photography feel"
+  },
+  {
+    "facet": "base_look",
+    "option_key": "warm_film",
+    "fragment": "shot on film, halated highlights, soft highlight roll-off"
+  },
+  {
+    "facet": "colour",
+    "option_key": "contrast",
+    "fragment": "high contrast grade, deep shadows, bright highlights"
+  },
+  {
+    "facet": "colour",
+    "option_key": "cool",
+    "fragment": "cool colour grade, blue-leaning shadows"
+  },
+  {
+    "facet": "colour",
+    "option_key": "neutral",
+    "fragment": "neutral colour grade, accurate skin tones"
+  },
+  {
+    "facet": "colour",
+    "option_key": "warm",
+    "fragment": "warm colour grade, golden skin tones"
+  },
+  {
+    "facet": "expression",
+    "option_key": "anxious",
+    "fragment": "an anxious look, the brows drawn together and raised at their inner ends, the lips pressed thin, the eyes fixed and slightly widened"
+  },
+  {
+    "facet": "expression",
+    "option_key": "confident",
+    "fragment": "a level, confident look, the chin steady, the mouth closed and relaxed, the gaze direct to the lens"
+  },
+  {
+    "facet": "expression",
+    "option_key": "crying",
+    "fragment": "crying, the eyes wet and reddened along the lower lids, tears on the cheeks, the brows drawn up at their inner ends, the corners of the mouth pulled down"
+  },
+  {
+    "facet": "expression",
+    "option_key": "gym_tired",
+    "fragment": "tired after exertion, the upper lids low, the mouth slightly open, a faint tired smile, a light flush across the cheeks"
+  },
+  {
+    "facet": "expression",
+    "option_key": "laughing",
+    "fragment": "laughing, the mouth open in a wide smile with the upper teeth visible, the eyes narrowed and creased at the outer corners"
+  },
+  {
+    "facet": "expression",
+    "option_key": "neutral",
+    "fragment": "a relaxed neutral expression, lips closed and level, eyes open and calm"
+  },
+  {
+    "facet": "expression",
+    "option_key": "shy",
+    "fragment": "a slight shy smile, the chin dipped, the gaze angled just off the lens, the lips lightly pressed together"
+  },
+  {
+    "facet": "expression",
+    "option_key": "sleepy",
+    "fragment": "heavy-lidded eyes with the upper lids low, the mouth soft and closed, the brow unfurrowed"
+  },
+  {
+    "facet": "expression",
+    "option_key": "soft_smile",
+    "fragment": "a soft closed-mouth smile, the corners of the mouth slightly raised, a small crease at the outer eyes"
+  },
+  {
+    "facet": "expression",
+    "option_key": "surprised",
+    "fragment": "surprised, the eyes wide with the upper lids raised, the brows lifted, the mouth fallen slightly open"
+  },
+  {
+    "facet": "expression",
+    "option_key": "weird",
+    "fragment": "an odd unreadable look, one brow raised higher than the other, the mouth pulled slightly to one side, the eyes narrowed"
+  },
+  {
+    "facet": "framing",
+    "option_key": "close",
+    "fragment": "close-up portrait, head and shoulders"
+  },
+  {
+    "facet": "framing",
+    "option_key": "full",
+    "fragment": "full body shot"
+  },
+  {
+    "facet": "framing",
+    "option_key": "medium",
+    "fragment": "medium shot, waist up"
+  },
+  {
+    "facet": "framing",
+    "option_key": "wide",
+    "fragment": "wide environmental shot, subject small in frame"
+  },
+  {
+    "facet": "grain",
+    "option_key": "fine",
+    "fragment": "fine film grain"
+  },
+  {
+    "facet": "grain",
+    "option_key": "none",
+    "fragment": ""
+  },
+  {
+    "facet": "grain",
+    "option_key": "visible",
+    "fragment": "visible film grain, analogue texture"
+  },
+  {
+    "facet": "hair_detail",
+    "option_key": "off",
+    "fragment": ""
+  },
+  {
+    "facet": "hair_detail",
+    "option_key": "on",
+    "fragment": "individual hair strands visible at the hairline, natural flyaways, realistic hair sheen with strand-to-strand variation"
+  },
+  {
+    "facet": "lens",
+    "option_key": "environmental_35",
+    "fragment": "35mm f/2 lens, environmental framing, the room visible behind her"
+  },
+  {
+    "facet": "lens",
+    "option_key": "natural_50",
+    "fragment": "50mm f/1.8 lens, natural perspective, moderate depth of field"
+  },
+  {
+    "facet": "lens",
+    "option_key": "portrait_85",
+    "fragment": "85mm f/1.4 portrait lens, shallow depth of field, eyes tack-sharp, soft bokeh background, gentle feature compression"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "back_left",
+    "fragment": "backlit from camera left, rim light along the jaw and shoulder, hair edge-lit"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "back_right",
+    "fragment": "backlit from camera right, rim light along the jaw and shoulder, hair edge-lit"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "camera_left",
+    "fragment": "lit from camera left, catchlights in the eyes, gentle shadow falling to camera right"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "camera_right",
+    "fragment": "lit from camera right, catchlights in the eyes, gentle shadow falling to camera left"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "front",
+    "fragment": "lit from directly in front of the subject, even illumination, catchlights centred in the eyes"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "front_left",
+    "fragment": "lit from front camera left at 45 degrees, sculpted cheekbone shadow, catchlights in the eyes"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "front_right",
+    "fragment": "lit from front camera right at 45 degrees, sculpted cheekbone shadow, catchlights in the eyes"
+  },
+  {
+    "facet": "light_direction",
+    "option_key": "top",
+    "fragment": "lit from above, short shadows under the brow and nose"
+  },
+  {
+    "facet": "light_quality",
+    "option_key": "hard",
+    "fragment": "hard directional light, crisp shadow edges"
+  },
+  {
+    "facet": "light_quality",
+    "option_key": "soft",
+    "fragment": "soft diffused light, gradual shadow edges"
+  },
+  {
+    "facet": "quality",
+    "option_key": "base",
+    "fragment": "photorealistic, sharp focus on the eyes, natural colour, high detail"
+  },
+  {
+    "facet": "skin",
+    "option_key": "natural",
+    "fragment": "visible skin pores, natural subsurface scattering, slight skin oiliness, faint freckles"
+  },
+  {
+    "facet": "skin",
+    "option_key": "subtle",
+    "fragment": "natural skin texture, fine pores, subsurface scattering"
+  },
+  {
+    "facet": "skin",
+    "option_key": "textured",
+    "fragment": "pronounced skin texture, visible pores and fine lines, natural blemishes, subsurface scattering, faint freckles across the nose and cheeks"
+  },
+  {
+    "facet": "time_of_day",
+    "option_key": "afternoon",
+    "fragment": "warm afternoon light"
+  },
+  {
+    "facet": "time_of_day",
+    "option_key": "golden",
+    "fragment": "golden hour light, low warm sun"
+  },
+  {
+    "facet": "time_of_day",
+    "option_key": "midday",
+    "fragment": "midday light, bright and overhead"
+  },
+  {
+    "facet": "time_of_day",
+    "option_key": "morning",
+    "fragment": "early morning light, cool and clear"
+  },
+  {
+    "facet": "time_of_day",
+    "option_key": "night",
+    "fragment": "night, warm practical lights in frame"
+  }
+]

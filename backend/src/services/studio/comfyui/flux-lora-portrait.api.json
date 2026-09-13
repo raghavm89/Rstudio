@@ -1,0 +1,140 @@
+{
+  "_comment": "Flux.1 dev + character LoRA, ComfyUI API format. Do not edit by hand at runtime — buildWorkflow.js clones this and fills the marked inputs. Kept as a file so the node graph is reviewable in a diff. Node ids match the ComfyUI default Flux template so a designer can open it in the GUI unchanged.",
+
+  "12": {
+    "class_type": "UNETLoader",
+    "_meta": { "title": "Load diffusion model" },
+    "inputs": {
+      "unet_name": "flux1-dev.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    }
+  },
+
+  "40": {
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "Character LoRA" },
+    "inputs": {
+      "model": ["12", 0],
+      "lora_name": "PLACEHOLDER.safetensors",
+      "strength_model": 0.95
+    }
+  },
+
+  "30": {
+    "class_type": "ModelSamplingFlux",
+    "_meta": { "title": "Model sampling" },
+    "inputs": {
+      "model": ["40", 0],
+      "max_shift": 1.15,
+      "base_shift": 0.5,
+      "width": 1024,
+      "height": 1280
+    }
+  },
+
+  "11": {
+    "class_type": "DualCLIPLoader",
+    "_meta": { "title": "Text encoders" },
+    "inputs": {
+      "clip_name1": "t5xxl_fp8_e4m3fn.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "type": "flux"
+    }
+  },
+
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Assembled prompt" },
+    "inputs": {
+      "text": "PLACEHOLDER",
+      "clip": ["11", 0]
+    }
+  },
+
+  "26": {
+    "class_type": "FluxGuidance",
+    "_meta": { "title": "Guidance" },
+    "inputs": {
+      "conditioning": ["6", 0],
+      "guidance": 3.5
+    }
+  },
+
+  "22": {
+    "class_type": "BasicGuider",
+    "_meta": { "title": "Guider (no negative — Flux dev is guidance-distilled)" },
+    "inputs": {
+      "model": ["30", 0],
+      "conditioning": ["26", 0]
+    }
+  },
+
+  "16": {
+    "class_type": "KSamplerSelect",
+    "_meta": { "title": "Sampler" },
+    "inputs": { "sampler_name": "euler" }
+  },
+
+  "17": {
+    "class_type": "BasicScheduler",
+    "_meta": { "title": "Scheduler" },
+    "inputs": {
+      "model": ["30", 0],
+      "scheduler": "simple",
+      "steps": 24,
+      "denoise": 1.0
+    }
+  },
+
+  "25": {
+    "class_type": "RandomNoise",
+    "_meta": { "title": "Seed" },
+    "inputs": { "noise_seed": 0 }
+  },
+
+  "5": {
+    "class_type": "EmptySD3LatentImage",
+    "_meta": { "title": "Canvas" },
+    "inputs": {
+      "width": 1024,
+      "height": 1280,
+      "batch_size": 1
+    }
+  },
+
+  "13": {
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": { "title": "Sample" },
+    "inputs": {
+      "noise": ["25", 0],
+      "guider": ["22", 0],
+      "sampler": ["16", 0],
+      "sigmas": ["17", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+
+  "10": {
+    "class_type": "VAELoader",
+    "_meta": { "title": "VAE" },
+    "inputs": { "vae_name": "ae.safetensors" }
+  },
+
+  "8": {
+    "class_type": "VAEDecode",
+    "_meta": { "title": "Decode" },
+    "inputs": {
+      "samples": ["13", 0],
+      "vae": ["10", 0]
+    }
+  },
+
+  "9": {
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save" },
+    "inputs": {
+      "images": ["8", 0],
+      "filename_prefix": "studio/PLACEHOLDER"
+    }
+  }
+}

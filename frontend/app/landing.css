@@ -1,0 +1,579 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   studio.rstudio.app — the front door.
+
+   Not the app's design system, on purpose. Direction C is built for someone
+   working: flat, quiet, legible for an hour at a time. A landing page has eight
+   seconds and a different job — it has to say what kind of thing this is before
+   anyone reads a word. So this is a fashion title: a didone display face, ivory
+   paper rather than white, a rule under the masthead, credits set in mono.
+
+   The two share exactly one thing — the violet — which is what makes the app
+   feel like the same product when you arrive rather than a different one.
+
+   ── The constraint that shaped it ──────────────────────────────────────────
+   There are no photographs. Every frame generated so far came from FLUX.1-dev
+   weights, which are licensed for non-commercial use, and a marketing page for
+   a paid product is commercial use — so those images cannot appear here at any
+   size. Rather than hold the page hostage to a photo shoot, the hero is built
+   as a PLATE: a lit, grained, captioned frame that cycles its metadata. Every
+   plate takes `--plate-src` when commercially-licensed frames exist, and the
+   layout does not move when they arrive.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.lp {
+  /* Paper, not white. An ivory ground is the single cheapest thing that stops a
+     page reading as a web app. */
+  --paper:      #F6F3EC;
+  --paper-2:    #EFEAE0;
+  --ink:        #14120F;
+  --ink-2:      #4A453D;
+  --ink-3:      #8A8377;
+  --rule:       #D9D2C4;
+  --violet:     #5B3DF5;
+  --violet-ink: #3D26B8;
+
+  /* macOS ships Didot and Bodoni 72, so the fallback is a real didone rather
+     than a limp Georgia — which matters, because `optimizeFonts: false` means
+     Google Fonts can be blocked and this page still has to look like itself. */
+  --display: 'Bodoni Moda', Didot, 'Bodoni 72', 'Bodoni MT', 'Playfair Display', Georgia, serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Paper tooth. Very low contrast — you should notice it only if it is removed. */
+.lp::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  opacity: .16; mix-blend-mode: multiply;
+}
+.lp > * { position: relative; z-index: 1; }
+
+.lp-wrap { max-width: 1240px; margin: 0 auto; padding: 0 40px; }
+
+/* ── Masthead ──────────────────────────────────────────────────────────────
+   Three columns with the wordmark centred, the way a title page is set. The
+   rule under it is the whole trick: one hairline and the page stops being a
+   website. */
+
+/* Two slots, not three. The middle column existed to centre the wordmark
+   against a strap on the left — "Issue 01 · Est. 2026", which borrowed a
+   magazine's back catalogue and claimed heritage in the year of launch. With
+   the strap gone the wordmark belongs at the left edge, where a product's name
+   goes; keeping the three-column grid would leave it floating in the middle
+   above an empty third. The editorial character stays where it is earned — the
+   Bodoni headline, the plate's crop marks and slate, the mono captions. */
+.lp-masthead {
+  display: grid; grid-template-columns: auto 1fr; align-items: center;
+  padding: 22px 0 14px; border-bottom: 1px solid var(--ink);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-2);
+}
+.lp-masthead .word {
+  font-family: var(--display); font-size: 25px; font-weight: 500;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--ink);
+}
+.lp-mast-right { display: flex; gap: 22px; justify-content: flex-end; align-items: center; }
+.lp-mast-right a { color: var(--ink-2); text-decoration: none; }
+.lp-mast-right a:hover { color: var(--violet); }
+.lp-mast-right a.cta { color: var(--ink); border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
+
+/* ── Hero ───────────────────────────────────────────────────────────────────
+   Asymmetric on purpose: 7 columns of type against 5 of plate, with the plate
+   dropped below the headline's baseline. A symmetrical hero reads as a
+   template; the offset is what makes it look art-directed. */
+
+.lp-hero { display: grid; grid-template-columns: 1.15fr 1fr; gap: 64px; padding: 72px 0 84px; align-items: start; }
+
+.lp-kicker {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--violet-ink); display: flex; align-items: center; gap: 10px; margin-bottom: 26px;
+}
+.lp-kicker::after { content: ''; flex: 1; border-top: 1px solid var(--rule); }
+
+/* The headline. Enormous, tight, and set in the didone — this is the page's one
+   piece of real estate that has to work at a glance from across a room. */
+.lp-h1 {
+  font-family: var(--display); font-weight: 400;
+  font-size: clamp(52px, 7.4vw, 104px); line-height: .92; letter-spacing: -.022em;
+  margin: 0 0 4px; text-wrap: balance;
+}
+.lp-h1 em { font-style: italic; }
+.lp-h1 .rule-word { position: relative; white-space: nowrap; }
+
+.lp-deck {
+  font-size: 16.5px; line-height: 1.62; color: var(--ink-2); max-width: 46ch;
+  margin: 30px 0 0; padding-top: 26px; border-top: 1px solid var(--rule);
+}
+.lp-deck b { color: var(--ink); font-weight: 600; }
+
+.lp-actions { display: flex; gap: 14px; align-items: center; margin-top: 30px; flex-wrap: wrap; }
+.lp-btn {
+  display: inline-flex; align-items: center; gap: 9px; text-decoration: none;
+  font-size: 14px; font-weight: 600; padding: 13px 24px; border-radius: 999px;
+  background: var(--ink); color: var(--paper); border: 1px solid var(--ink);
+  transition: transform .18s ease, background .18s ease;
+}
+.lp-btn:hover { background: var(--violet); border-color: var(--violet); transform: translateY(-1px); }
+.lp-btn.ghost { background: transparent; color: var(--ink); border-color: var(--rule); }
+.lp-btn.ghost:hover { background: transparent; color: var(--violet); border-color: var(--violet); }
+.lp-note { font-family: var(--mono); font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); margin-top: 18px; }
+
+/* ── The plate ──────────────────────────────────────────────────────────────
+   A frame that has been lit but not yet exposed. It carries the crop marks, the
+   grain and the caption of a real photographic plate, and cycles its metadata
+   so the hero moves without a video file — which is also, honestly, how the
+   product works: the same face, re-lit and re-framed.
+
+   `--plate-src` is the slot. When commercially-licensed frames exist, set it and
+   nothing else changes. */
+
+.lp-plate-col { padding-top: 18px; }
+
+.lp-plate {
+  margin: 0;                       /* <figure> ships with 40px of UA margin */
+  position: relative; aspect-ratio: 4 / 5; border-radius: 3px; overflow: hidden;
+  /* A backdrop, not a black rectangle: a cyclorama falls off from a lit upper
+     area into shadow at the floor, and that vertical gradient is most of what
+     makes an empty frame read as a room someone is standing in. */
+  background:
+    radial-gradient(120% 80% at 50% 118%, rgba(60,50,42,.55), transparent 62%),
+    linear-gradient(178deg, #2A241E 0%, #17130F 48%, #0C0A08 100%);
+  box-shadow: 0 0 0 1px rgba(20,18,15,.14), 0 2px 4px rgba(20,18,15,.10), 0 30px 60px -22px rgba(20,18,15,.42);
+}
+.lp-plate-img {
+  position: absolute; inset: 0;
+  background-image: var(--plate-src, none);
+  background-size: cover; background-position: center;
+}
+
+/* Real footage. Sits UNDER the grain, vignette, crop marks and slate — the
+   overlays are not decoration on top of a video, they are the reason a generated
+   frame reads as photographed. Stripping them would make the hero look more
+   like an AI demo, not less. */
+.lp-plate-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  /* Two clips stack here and cross-dissolve at the loop point — a generated
+     clip does not end where it began, so a native loop cuts hard every few
+     seconds. Kept in step with FADE_MS in Plate.jsx: if this is slower than the
+     JS timer the swap lands mid-fade and the cut comes back. */
+  opacity: 1;
+  transition: opacity 600ms linear;
+}
+/* Someone who has asked for less motion should not be given a cross-dissolving
+   autoplay video; the plate falls back to the poster frame, which is a
+   photograph rather than a blank. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-plate-video { transition: none; }
+}
+/* With footage the backdrop gradient would show through as a colour cast at the
+   edges of an object-fit crop. */
+.lp-plate.has-footage { background: #0C0A08; }
+/* Grain over real footage wants to be lighter than grain over a drawn plate —
+   the clip already carries its own. */
+.lp-plate.has-footage .lp-plate-grain { opacity: .17; }
+.lp-plate.has-footage .lp-plate-vig { box-shadow: inset 0 0 70px 10px rgba(10,8,6,.4); }
+
+.lp-cell-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* The lighting. Two soft sources at different angles, which is what makes an
+   empty frame read as "lit set" rather than "failed to load". */
+.lp-lights { position: absolute; inset: 0; }
+.lp-light {
+  position: absolute; border-radius: 50%; filter: blur(46px);
+  opacity: 0; transition: opacity 1.1s ease, transform 1.6s cubic-bezier(.2,.7,.2,1);
+}
+.lp-plate[data-frame] .lp-light { opacity: 1; }
+/* Three sources, the way a portrait is actually lit. The key is warm, tight and
+   high; the rim is a cool edge rather than a mass in the middle — a big soft
+   violet blob in the centre of frame is not a light, it is a bruise; the bounce
+   is a low warm spill off the floor.
+
+   Opacities are low on purpose. The grain and the backdrop do most of the work,
+   and light you can point at has stopped being light. */
+.lp-key    { width: 68%; height: 54%; left: -8%;   top: 0%;     background: radial-gradient(circle, rgba(255,243,222,.92), rgba(255,243,222,0) 66%); }
+.lp-fill   { width: 34%; height: 78%; right: -16%; top: 4%;     background: radial-gradient(circle, rgba(120,96,255,.46), rgba(120,96,255,0) 68%); }
+.lp-rim    { width: 96%; height: 34%; left: 2%;    bottom: -12%; background: radial-gradient(circle, rgba(226,132,86,.34), rgba(226,132,86,0) 70%); }
+
+/* Each cycle re-aims the lights, so the frame changes the way a set changes
+   between setups rather than the way a slideshow changes. */
+.lp-plate[data-frame="1"] .lp-key  { transform: translate(8%, 6%)  scale(1.06); }
+.lp-plate[data-frame="1"] .lp-fill { transform: translate(-6%, -8%) scale(.92); }
+.lp-plate[data-frame="2"] .lp-key  { transform: translate(-4%, 14%) scale(.9); }
+.lp-plate[data-frame="2"] .lp-fill { transform: translate(4%, 10%)  scale(1.12); }
+.lp-plate[data-frame="3"] .lp-key  { transform: translate(14%, -4%) scale(1.14); }
+.lp-plate[data-frame="3"] .lp-rim  { transform: translate(-8%, -6%) scale(1.1); }
+
+.lp-plate-grain {
+  position: absolute; inset: -20%; pointer-events: none; opacity: .32; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+  animation: lp-grain 700ms steps(3) infinite;
+}
+@keyframes lp-grain {
+  0%   { transform: translate(0, 0); }
+  33%  { transform: translate(-3%, 2%); }
+  66%  { transform: translate(2%, -3%); }
+  100% { transform: translate(0, 0); }
+}
+
+.lp-plate-vig { position: absolute; inset: 0; box-shadow: inset 0 0 78px 14px rgba(10,8,6,.5); pointer-events: none; }
+
+/* Crop marks. Four corners, hairline, inset — the detail that says "this is a
+   frame being prepared" without a word of explanation. */
+/* Inset clear of BOTH slates. At `inset: 14px` the marks landed on the roll
+   counter above and the caption below, which reads as a rendering fault rather
+   than as a crop mark. */
+.lp-marks { position: absolute; inset: 42px 14px 46px; pointer-events: none; }
+.lp-marks span { position: absolute; width: 15px; height: 15px; border: 0 solid rgba(255,255,255,.62); }
+.lp-marks span:nth-child(1) { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+.lp-marks span:nth-child(2) { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+.lp-marks span:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+.lp-marks span:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
+
+/* The caption is the argument. It is the app's real vocabulary — lens, light,
+   framing, and the likeness score — set as a photographer's slate. Anyone who
+   has shot anything reads it as competence; anyone who has not still sees a
+   machine that knows what it is doing. */
+/* Roll and take, top left. The page is selling video as much as stills, and a
+   counter is the cheapest honest way to say so — it belongs to a camera, not to
+   a web page pretending to be one. */
+.lp-slate-top {
+  position: absolute; left: 0; right: 0; top: 0; padding: 13px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: rgba(255,255,255,.62);
+  background: linear-gradient(to bottom, rgba(10,8,6,.62), rgba(10,8,6,0));
+}
+.lp-slate-top .rec { display: inline-flex; align-items: center; gap: 6px; color: rgba(255,255,255,.86); }
+.lp-slate-top .rec::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: #E2544A;
+  animation: lp-rec 2.4s ease-in-out infinite;
+}
+@keyframes lp-rec { 0%,100% { opacity: 1; } 50% { opacity: .28; } }
+
+.lp-slate {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(255,255,255,.9);
+  background: linear-gradient(to top, rgba(10,8,6,.86), rgba(10,8,6,0));
+}
+.lp-slate .qc {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 3px 8px; border-radius: 999px; background: rgba(18,122,70,.9); color: #fff; letter-spacing: .06em;
+}
+.lp-slate .qc::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #7BE3A8; }
+/* Shown instead of a score when nothing has actually been measured. Neutral, not
+   green: green is the app's "this passed", and spending it on a frame no gate
+   has looked at would make the real badge mean less. */
+.lp-slate .meta { color: rgba(255,255,255,.62); white-space: nowrap; }
+
+.lp-plate-cap {
+  display: flex; justify-content: space-between; gap: 16px; margin-top: 12px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-3);
+}
+
+/* Frame ticks — which setup you are on, and a hint that there are more. */
+.lp-ticks { display: flex; gap: 5px; }
+.lp-ticks i { width: 16px; height: 2px; background: var(--rule); display: block; }
+.lp-ticks i.on { background: var(--ink); }
+
+/* ── Contact sheet ──────────────────────────────────────────────────────────
+   The proof, stated as a strip rather than a sentence: one face, six setups.
+   Runs full-bleed so it reads as a strip of film rather than a row of cards. */
+
+.lp-sheet { border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule); padding: 18px 0 22px; }
+.lp-sheet-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 20px; margin-bottom: 16px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+.lp-sheet-head b { color: var(--ink); font-weight: 500; }
+/* `align-items: start` is load-bearing. A grid item stretches to its row by
+   default, and a stretched height overrides `aspect-ratio` — so the frames came
+   out landscape when the whole point is that they are portrait plates. */
+.lp-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: start; }
+.lp-cell { position: relative; aspect-ratio: 4 / 5; border-radius: 2px; overflow: hidden; background: #1A1713; }
+.lp-cell .lp-plate-grain { opacity: .26; animation-duration: 900ms; }
+.lp-cell-l { position: absolute; border-radius: 50%; filter: blur(24px); }
+.lp-cell-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 7px 8px;
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(255,255,255,.86); background: linear-gradient(to top, rgba(10,8,6,.9), rgba(10,8,6,0));
+}
+
+/* ── Editorial body ─────────────────────────────────────────────────────────
+   Three movements, numbered like a feature. Numerals in the didone at a size
+   that would be absurd anywhere else — which is exactly the register a magazine
+   uses and an app never does. */
+
+.lp-feature { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; padding: 90px 0 20px; }
+.lp-feature h2 {
+  font-family: var(--display); font-weight: 400; font-size: clamp(34px, 4vw, 52px);
+  line-height: 1.02; letter-spacing: -.02em; margin: 0; text-wrap: balance;
+}
+.lp-feature h2 em { font-style: italic; }
+.lp-feature .lp-deck { margin-top: 0; border-top: 0; padding-top: 6px; }
+
+.lp-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 34px; padding: 54px 0 90px; }
+.lp-step { border-top: 1px solid var(--ink); padding-top: 16px; }
+.lp-step .n {
+  font-family: var(--display); font-size: 46px; line-height: 1; color: var(--violet); display: block; margin-bottom: 10px;
+}
+.lp-step h3 { font-family: var(--display); font-weight: 400; font-size: 25px; margin: 0 0 8px; letter-spacing: -.01em; }
+.lp-step p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--ink-2); }
+.lp-step .meta { display: block; margin-top: 10px; font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+
+/* ── Closing ────────────────────────────────────────────────────────────────
+   The one dark surface on the page, and the same one the app uses for the
+   assembled prompt. Reusing it here is what ties the front door to the room. */
+
+.lp-close {
+  background: #14120F; color: #F6F3EC; border-radius: 4px; padding: 64px 56px;
+  margin: 0 0 70px; display: grid; grid-template-columns: 1.2fr 1fr; gap: 48px; align-items: center;
+}
+.lp-close h2 {
+  font-family: var(--display); font-weight: 400; font-size: clamp(34px, 4.4vw, 58px);
+  line-height: 1.0; letter-spacing: -.02em; margin: 0 0 14px; color: #fff;
+}
+.lp-close h2 em { font-style: italic; }
+.lp-close p { margin: 0; color: #C9C2B4; font-size: 15.5px; line-height: 1.62; max-width: 44ch; }
+.lp-close .lp-btn { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.lp-close .lp-btn:hover { background: var(--violet); border-color: var(--violet); color: #fff; }
+.lp-close .lp-note { color: #8A8377; }
+.lp-close-right { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.lp-price { font-family: var(--display); font-size: 44px; line-height: 1; }
+.lp-price small { font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: #8A8377; display: block; margin-top: 8px; }
+
+.lp-foot {
+  border-top: 1px solid var(--rule); padding: 22px 0 46px;
+  display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+}
+.lp-foot a { color: var(--ink-3); text-decoration: none; }
+.lp-foot a:hover { color: var(--violet); }
+/* The disclosure is a masthead credit, not fine print hidden at the bottom —
+   it is a claim about how this product behaves, and it should read as one. */
+.lp-foot .disclose { color: var(--ink-2); }
+
+/* ── Entrance ───────────────────────────────────────────────────────────────
+   The headline settles rather than appears. One animation, 700ms, no scroll
+   choreography — a landing page that performs at you is a landing page nobody
+   finishes reading. */
+@keyframes lp-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.lp-rise { animation: lp-rise .7s cubic-bezier(.2,.7,.2,1) both; }
+.lp-rise-2 { animation-delay: .09s; }
+.lp-rise-3 { animation-delay: .18s; }
+.lp-rise-4 { animation-delay: .27s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-rise { animation: none; }
+  .lp-slate-top .rec::before { animation: none; }
+  .lp-plate-grain { animation: none; }
+  .lp-light { transition: opacity .3s ease; }
+  .lp-btn { transition: none; }
+}
+
+/* ── Narrow ─────────────────────────────────────────────────────────────────
+   The type leads on a phone, not the plate.
+   The instinct is to put the picture first — a picture stops the scroll. But
+   this picture is a lit empty frame, and an abstract rectangle at the top of a
+   phone reads as something that failed to load. The headline is the strongest
+   thing on the page at any width, so it opens, and the plate follows it as a
+   plate does in a magazine: laid on the page, not filling it. */
+@media (max-width: 1000px) {
+  .lp-wrap { padding: 0 24px; }
+  .lp-hero { grid-template-columns: 1fr; gap: 36px; padding: 44px 0 56px; }
+  .lp-plate-col { padding-top: 0; max-width: 420px; }
+  .lp-feature { grid-template-columns: 1fr; gap: 24px; padding: 62px 0 10px; }
+  .lp-steps { grid-template-columns: 1fr; gap: 26px; padding: 38px 0 62px; }
+  .lp-close { grid-template-columns: 1fr; padding: 40px 28px; gap: 28px; }
+  .lp-strip { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ── Phone ──────────────────────────────────────────────────────────────────
+   The masthead needs less padding here, and the section anchors go — they point
+   at sections that are a thumb-flick away.
+
+   The two-column layout used to be defined here, because at 390px the centred
+   wordmark and the nav overlapped. It is the default now, so the override and
+   the rule hiding the strap are gone with it — the strap no longer exists, and a
+   stylesheet that keeps hiding an element nobody renders is a note to the next
+   reader about a layout that is not there. */
+@media (max-width: 720px) {
+  .lp-masthead { padding: 18px 0 12px; }
+  .lp-masthead .word { font-size: 21px; letter-spacing: .14em; }
+  .lp-mast-right { gap: 16px; }
+  /* Hide the in-page section anchors, which point at things a thumb-flick away.
+     NOT every non-CTA link: that rule also swallowed the auth page's only route
+     back to the site. */
+  .lp-mast-right a[href^="#"] { display: none; }
+
+  /* The slate wrapped to three lines at this width and shoved the score pill
+     out of the frame. Wrapping is right; wrapping badly is not. */
+  .lp-slate { flex-wrap: wrap; row-gap: 7px; padding: 12px 13px; font-size: 9px; }
+  .lp-slate-top { font-size: 8.5px; padding: 11px 13px; }
+  .lp-marks { inset: 36px 12px 62px; }
+
+  .lp-plate-col { max-width: 340px; }
+  .lp-actions { gap: 10px; }
+  .lp-btn { padding: 12px 20px; }
+  .lp-close { padding: 34px 22px; }
+  .lp-foot { flex-direction: column; gap: 10px; }
+}
+
+/* ── Sign in / create account ────────────────────────────────────────────────
+   The same title as the front door, not the app's design system.
+
+   The first version of this screen was built in Direction C, which made the door
+   look like a different building from the house. Someone arriving from the
+   landing page has just been shown a fashion title; a violet SaaS card a click
+   later reads as a redirect somewhere else — and the moment a person doubts they
+   are on the right site is the moment they stop typing a password.
+
+   Everything below reuses the tokens above rather than redefining them, which is
+   why the whole screen is wrapped in `.lp`. There is no second palette to keep
+   in step.                                                                     */
+
+/* NOT a flex column. `.lp-wrap` centres itself with `margin: 0 auto`, and auto
+   margins on a flex item absorb the free space instead of stretching — so the
+   1240px wrap collapsed to its content width (761px here) and every grid column
+   inside it shrank to match. The page looked like a narrow template rather than
+   a broken one, which is why it took measuring to find. */
+.lp-auth { min-height: 100vh; display: block; }
+
+/* Plate left, form right — the landing page mirrored rather than repeated. Same
+   spread, turned over: the ivory column gets the light, and the picture is the
+   thing that says you have not left. */
+.lp-auth-split {
+  display: grid; grid-template-columns: 1fr 0.92fr;
+  gap: 80px; align-items: center;
+  padding: 48px 0 64px;
+  min-height: calc(100vh - 160px);
+}
+.lp-auth-plate { padding-top: 0; }
+.lp-auth-main { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.lp-auth-card { width: 100%; max-width: 430px; }
+
+.lp-auth-h1 {
+  font-family: var(--display); font-weight: 400;
+  font-size: clamp(34px, 3.6vw, 50px); line-height: 1.02; letter-spacing: -.02em;
+  margin: 0 0 10px; text-wrap: balance;
+}
+.lp-auth-h1 em { font-style: italic; }
+.lp-auth-deck { font-size: 15px; line-height: 1.6; color: var(--ink-2); margin: 0 0 24px; }
+.lp-auth-deck b { color: var(--ink); font-weight: 600; }
+
+/* Two tabs, one rule. A pill-in-a-tray would import the app's vocabulary onto a
+   page that is deliberately not speaking it; an underline is what a printed
+   contents page does. */
+.lp-tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--rule); margin: 18px 0 24px; }
+.lp-tabs button {
+  border: 0; background: none; cursor: pointer; padding: 0 0 11px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-3); border-bottom: 1px solid transparent; margin-bottom: -1px;
+}
+.lp-tabs button:hover { color: var(--ink-2); }
+.lp-tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* Fields with a rule under them rather than a box around them. A boxed input is
+   a form control; a ruled one is a line on a page you write on. */
+.lp-field { display: block; margin-bottom: 20px; }
+.lp-field-label {
+  display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: 7px;
+}
+.lp-field input, .lp-pw input {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 15.5px; color: var(--ink);
+  background: transparent; border: 0; border-bottom: 1px solid var(--rule);
+  padding: 6px 0 9px; border-radius: 0;
+}
+.lp-field input::placeholder { color: #BDB6A8; }
+.lp-field input:focus, .lp-pw input:focus { outline: none; border-bottom-color: var(--violet); }
+.lp-field-hint { display: block; margin-top: 7px; font-size: 12px; color: var(--ink-3); }
+
+.lp-pw { position: relative; }
+.lp-pw input { padding-right: 56px; }
+.lp-pw button {
+  position: absolute; right: 0; bottom: 9px; border: 0; background: none; cursor: pointer;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); padding: 2px 0;
+}
+.lp-pw button:hover { color: var(--violet); }
+
+.lp-btn.wide { width: 100%; justify-content: center; margin-top: 8px; }
+.lp-btn:disabled { opacity: .5; cursor: default; }
+.lp-btn:disabled:hover { background: var(--ink); border-color: var(--ink); transform: none; }
+
+/* A text button that is a rule, not a pill — for anything secondary. */
+.lp-link {
+  border: 0; background: none; cursor: pointer; padding: 0; text-align: left;
+  font: inherit; font-size: 13px; color: var(--violet-ink);
+  border-bottom: 1px solid var(--violet-soft, #D8CEFB);
+}
+.lp-link:hover { border-bottom-color: var(--violet); }
+.lp-link:disabled { color: var(--ink-3); border-bottom-color: transparent; cursor: default; }
+.lp-back { display: block; margin: 26px auto 0; color: var(--ink-2); border-bottom-color: var(--rule); }
+
+/* Messages. Amber for "a machine is not running", red for "the app refused you".
+   Spending red on a process you forgot to start makes red mean less when
+   something is genuinely wrong. */
+.lp-msg {
+  display: flex; flex-direction: column; gap: 5px; align-items: flex-start;
+  margin-top: 18px; padding: 13px 15px; border-radius: 3px; font-size: 13px; line-height: 1.5;
+  border-left: 2px solid;
+}
+.lp-msg b { font-size: 13px; }
+.lp-msg.crit   { background: #FBEDEC; border-color: #C24A3E; color: #7A241C; }
+.lp-msg.warn   { background: #FBF3E4; border-color: #B7802E; color: #6E4C13; }
+.lp-msg.violet { background: var(--violet-tint, #F1EEFE); border-color: var(--violet); color: var(--violet-ink); }
+.lp-msg.ok     { background: #EAF4EC; border-color: #2E7D4F; color: #1D5233; margin-top: 14px; }
+
+.lp-rule-or {
+  display: flex; align-items: center; gap: 14px; margin: 26px 0 16px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+.lp-rule-or::before, .lp-rule-or::after { content: ''; flex: 1; border-top: 1px solid var(--rule); }
+
+.lp-oauth { display: flex; flex-direction: column; gap: 9px; }
+.lp-oauth-btn {
+  display: flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none;
+  border: 1px solid var(--rule); border-radius: 999px; padding: 11px 16px;
+  font-size: 13.5px; font-weight: 500; color: var(--ink); background: transparent;
+}
+.lp-oauth-btn:hover { border-color: var(--ink); }
+
+.lp-auth-foot { margin-top: 22px; }
+.lp-auth-foot a { color: var(--violet-ink); text-decoration: none; border-bottom: 1px solid var(--rule); }
+.lp-auth-foot a:hover { border-bottom-color: var(--violet); }
+
+/* Six boxes, not one field. A code is read in pairs off another screen, and a
+   single long input gives no sense of progress. Set in the mono face at a size
+   that makes a mistyped digit obvious. */
+.lp-otp { display: flex; gap: 10px; margin: 24px 0 4px; }
+.lp-otp input {
+  width: 100%; min-width: 0; aspect-ratio: 3 / 4; text-align: center;
+  font-family: var(--mono); font-size: 22px; color: var(--ink);
+  background: transparent; border: 1px solid var(--rule); border-radius: 2px;
+}
+.lp-otp input:focus { outline: none; border-color: var(--violet); box-shadow: inset 0 -2px 0 var(--violet); }
+.lp-otp-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 20px; }
+
+@media (max-width: 1000px) {
+  .lp-auth-split { grid-template-columns: 1fr; gap: 34px; padding: 32px 0 56px; }
+  /* Form first on a narrow screen. The plate is the reassurance, not the task —
+     and a picture filling the first screen of a sign-in page is a scroll between
+     someone and the thing they came to do. */
+  .lp-auth-plate { order: 2; max-width: 360px; }
+  .lp-auth-card { max-width: none; }
+}
+
+/* The pricing block gained a third tier and a rate-card line. */
+.lp-price-note {
+  margin: 14px 0 0; font-family: var(--mono); font-size: 10.5px;
+  letter-spacing: .06em; color: var(--ink-3); line-height: 1.6; max-width: 34ch;
+}
