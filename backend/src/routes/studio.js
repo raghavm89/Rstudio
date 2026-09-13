@@ -150,6 +150,11 @@ router.post('/avatars',       authorize(...TENANT_ROLES), asyncHandler(avatarCtr
 // After /avatars/rules, so the literal segment is matched before the parameter.
 router.get ('/avatars/:id',   authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.get));
 
+// Clone consent — create a record for a twin, and verify it is the same person.
+const consentCtrl = require('../controllers/studioConsentController');
+router.post('/avatars/:id/consent', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(consentCtrl.create));
+router.post('/consent/:id/verify',  authorize(...TENANT_ROLES), parseId('id'), asyncHandler(consentCtrl.verify));
+
 // Culling — the pool, the verdicts and the export gate.
 //
 // This replaces a standalone HTTP service on :5055 that had no authentication

@@ -181,10 +181,16 @@ external lead time, not code.
     S3-compatible storage.
 
 **Lane 6 — realtime clone** _(critical path, unbuilt)_
-13. Rachbase container substrate + public URLs; the consent capture flow.
+13. Rachbase container substrate + public URLs. Consent: the **verification is
+    built** (`consent.js` + endpoints — create a record, same-person face match,
+    mark verified; the gate was already enforced everywhere). Remaining: the
+    hosted-capture UI (record the video), and the legal statement/retention
+    policy (lawyer).
 
 **Lane 7 — content & catalogue**
-14. Frontend build check + preview images for the catalogue.
+14. ~~Frontend build check~~ **DONE** — `next build` is clean, all 27 pages
+    compile (incl. `/catalogue`, `/admin/catalogue`). Still: preview images for
+    catalogue cards.
 15. Generate → train → calibrate → publish the Delhi/Punjab catalogue personas.
 16. The persona itself (Aanya): fill the bible _(you)_, create IG/YouTube
     accounts, begin hand-posting.
