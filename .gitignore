@@ -33,5 +33,6 @@ backend/studio/personas/*/_review/
 # archives, backups, os cruft
 *.tar.gz
 *.bak
+*.bak*
 .DS_Store
 *.log

@@ -6,7 +6,7 @@
  *   node scripts/create-admin.js
  *
  * Usage (non-interactive — useful for CI/Docker):
- *   ADMIN_NAME="Raghav" ADMIN_EMAIL="admin@rach.dev" ADMIN_PASSWORD="s3cr3t!" node scripts/create-admin.js
+ *   ADMIN_NAME="Raghav" ADMIN_EMAIL="admin@rstudio.app" ADMIN_PASSWORD="s3cr3t!" node scripts/create-admin.js
  *
  * The script is idempotent — if an admin with the given email already exists
  * it exits cleanly without making any changes.
@@ -81,7 +81,7 @@ function promptSecret(question) {
 
 async function main() {
   console.log(`\n${BOLD}${CYAN}╔══════════════════════════════════════╗${RESET}`);
-  console.log(`${BOLD}${CYAN}║     Rach.Dev Admin Setup Wizard      ║${RESET}`);
+  console.log(`${BOLD}${CYAN}║      Rstudio Admin Setup Wizard      ║${RESET}`);
   console.log(`${BOLD}${CYAN}╚══════════════════════════════════════╝${RESET}\n`);
 
   // ── Resolve credentials (env vars → interactive prompt) ───────────────────
@@ -147,7 +147,7 @@ async function main() {
     console.log(`${YELLOW}Creating admin user…${RESET}`);
     const { rows } = await client.query(
       `INSERT INTO users
-         (name, email, password, role, email_verified, phone_verified, created_at, updated_at)
+         (name, email, password_hash, role, email_verified, phone_verified, created_at, updated_at)
        VALUES ($1, $2, $3, 'admin', TRUE, TRUE, NOW(), NOW())
        RETURNING id, name, email, role`,
       [name, email, hashed]

@@ -191,21 +191,45 @@ export default function Shell({ children }) {
  * colour.
  */
 export function Steps({ current, avatarId }) {
+  // A trained avatar's setup is done: the face and look steps read as complete
+  // and stop being navigable, so a ready avatar's only path here is to shoot.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    get(`/avatars/${avatarId}`)
+      .then((d) => {
+        const a = (d && d.avatar) || d || {};
+        if (alive) setReady(Boolean(a.trained || a.is_catalogue || a.status === 'active'));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [avatarId]);
+
   const steps = [
-    { key: 'face', n: 1, label: 'Find the face', href: `/avatars/${avatarId}/face` },
-    { key: 'look', n: 2, label: 'Set the look',  href: `/avatars/${avatarId}/look` },
-    { key: 'shoot', n: 3, label: 'Shoot',        href: `/avatars/${avatarId}/shoot` },
+    { key: 'face', n: 1, label: 'Find the face', href: `/avatars/${avatarId}/face`, setup: true },
+    { key: 'look', n: 2, label: 'Set the look',  href: `/avatars/${avatarId}/look`, setup: true },
   ];
   const at = steps.findIndex((s) => s.key === current);
 
   return (
     <div className="steps">
-      {steps.map((s, i) => (
-        <Link key={s.key} href={s.href}
-              className={`step ${i === at ? 'on' : i < at ? 'done' : ''}`}>
-          <span className="n">{s.n}</span>{s.label}
-        </Link>
-      ))}
+      {steps.map((s, i) => {
+        const onNow = i === at;
+        const done = (ready && s.setup) || i < at;
+        const locked = ready && s.setup && !onNow;
+        const cls = `step ${onNow ? 'on' : done ? 'done' : ''}`;
+        const mark = <span className="n">{done && !onNow ? '✓' : s.n}</span>;
+        return locked ? (
+          <span key={s.key} className={cls} style={{ cursor: 'default' }}
+                aria-disabled="true" title="Done — this avatar is trained">
+            {mark}{s.label}
+          </span>
+        ) : (
+          <Link key={s.key} href={s.href} className={cls}>
+            {mark}{s.label}
+          </Link>
+        );
+      })}
     </div>
   );
 }

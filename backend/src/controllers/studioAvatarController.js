@@ -44,7 +44,10 @@ function fail(res, err) {
 exports.list = async (req, res) => {
   const { rows } = await pool.query(
     `SELECT a.id, a.slug, a.name, a.mode, a.status, a.identity_block, a.lora_trigger,
-            a.bible_version, a.created_at,
+            a.bible_version, a.created_at, a.is_catalogue,
+            (SELECT s2.storage_url FROM studio_assets s2
+              WHERE s2.avatar_id = a.id AND s2.kind IN ('still','thumbnail') AND s2.storage_url IS NOT NULL
+              ORDER BY s2.selected DESC, s2.created_at DESC LIMIT 1) AS preview_url,
             EXISTS (SELECT 1 FROM avatar_loras l WHERE l.avatar_id = a.id AND l.active) AS trained,
             (SELECT COUNT(*) FROM studio_assets s WHERE s.avatar_id = a.id)::int        AS assets,
             /**
@@ -88,8 +91,11 @@ exports.list = async (req, res) => {
   // rather than offering a button that 402s.
   const client = await pool.connect();
   let limit = 0;
-  try { limit = await StudioUsage.limitFor(client, req.user.tenant_id, 'avatars', 'lifetime'); }
-  finally { client.release(); }
+  try {
+    limit = req.user.role === 'admin'
+      ? 0  // admins have no avatar cap; 0 = unlimited to the UI
+      : await StudioUsage.limitFor(client, req.user.tenant_id, 'avatars', 'lifetime');
+  } finally { client.release(); }
 
   return res.json({ avatars: rows, limit, used: rows.length });
 };
@@ -238,7 +244,11 @@ exports.create = async (req, res) => {
     // upsert, so two tabs submitting at once cannot both slip past a limit of
     // one — the second sees the first's increment. Avatars have no credit rate,
     // so this cap cannot be bought around either.
-    await StudioUsage.reserve(client, req.user.tenant_id, 'avatars', 1, 'lifetime', slug);
+    // Admins build catalogue content for everyone, so they are not capped on
+    // avatar count (they are already exempt from the Pro+ gate above).
+    if (req.user.role !== 'admin') {
+      await StudioUsage.reserve(client, req.user.tenant_id, 'avatars', 1, 'lifetime', slug);
+    }
 
     const { rows } = await client.query(
       `INSERT INTO avatars (tenant_id, slug, name, mode, subject_type, status, identity_block, avoid_block, lora_trigger)

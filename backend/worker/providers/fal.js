@@ -58,7 +58,7 @@ const ENDPOINTS = {
   // point of the step this serves. A different endpoint from `still` because
   // flux-lora requires an adapter and refuses without one.
   seed_still: process.env.FAL_BASE_MODEL   || 'fal-ai/flux/dev',
-  motion:     process.env.FAL_MOTION_MODEL || 'fal-ai/bytedance/seedance-2.0/mini/image-to-video',
+  motion:     process.env.FAL_MOTION_MODEL || 'bytedance/seedance-2.0/image-to-video',
   lora_train: process.env.FAL_LORA_TRAINER || 'fal-ai/flux-lora-fast-training',
 };
 
@@ -507,8 +507,14 @@ class FalProvider {
 
     // On local-disk storage this pushes the still through fal's own storage
     // first; on a public bucket it is a no-op.
+    // Seedance's image loader is strict and cannot read through ngrok's
+    // free-tier browser-warning interstitial — it fails as `image_load_error`.
+    // So always hand it a fal.media URL: download our still (a non-browser
+    // fetch bypasses ngrok's warning) and re-upload to fal storage. On the ngrok
+    // stopgap this is what makes motion work at all; on a real public bucket it
+    // is one harmless extra hop. Revisit once S3 replaces the tunnel.
     const imageUrl = await this.ensureFetchable(gen.image_url, {
-      publiclyFetchable: gen.publicly_fetchable !== false,
+      publiclyFetchable: false,
       filename: 'source.png',
       contentType: 'image/png',
     });

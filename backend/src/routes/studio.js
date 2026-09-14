@@ -128,6 +128,8 @@ router.use('/admin', adminRouter);
 // The one click. Everything else on this plane is plumbing around it.
 router.get ('/shoots',                 authorize(...TENANT_ROLES), asyncHandler(shootCtrl.list));
 router.post('/shoots',                 authorize(...TENANT_ROLES), asyncHandler(shootCtrl.create));
+router.post('/shoots/plan',            authorize(...TENANT_ROLES), asyncHandler(shootCtrl.plan));
+router.post('/transcribe',             authorize(...TENANT_ROLES), asyncHandler(shootCtrl.transcribe));
 router.get ('/shoots/:id',             authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.progress));
 
 // The persona list, and making one.

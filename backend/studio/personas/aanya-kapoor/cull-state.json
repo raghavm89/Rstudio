@@ -1,14 +1,23 @@
 {
   "keep": [
-    "0045-close-profile-soft-88297959.png",
+    "0001-close-front-soft-704316489.png",
+    "0004-close-front-hard-383351537.png",
     "0031-close-three-quarter-soft-969207289.png",
+    "0034-close-three-quarter-hard-1450901883.png",
+    "0045-close-profile-soft-88297959.png",
     "0046-close-profile-hard-1246551568.png",
     "0047-medium-front-soft-1700564564.png",
     "0048-medium-front-hard-1505362413.png",
     "0049-medium-three-quarter-soft-1369900762.png",
     "0050-medium-three-quarter-hard-1268554119.png",
     "0051-medium-profile-soft-686528613.png",
-    "0053-full-front-soft-1485948964.png"
+    "0052-medium-profile-hard-1644783362.png",
+    "0053-full-front-soft-1485948964.png",
+    "0081-full-front-hard-595585565.png",
+    "0095-full-three-quarter-soft-1149316946.png",
+    "0096-full-three-quarter-hard-1781237223.png",
+    "0097-full-profile-soft-645706257.png",
+    "0111-full-profile-hard-766877161.png"
   ],
   "reject": []
 }

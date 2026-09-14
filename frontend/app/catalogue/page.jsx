@@ -4,6 +4,13 @@ import { useState } from "react";
 import { post, errorText } from "../../lib/api";
 import { useResource, Resource } from "../../components/Guard";
 
+// Same-origin proxy for stored media — a raw ngrok URL hits the browser
+// warning interstitial and the image breaks.
+function toLocal(u) {
+  if (!u) return u;
+  try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; }
+}
+
 /**
  * The shared catalogue — browse ready-made avatars and adopt one.
  *
@@ -81,7 +88,7 @@ function Browse({ d, reload }) {
           <div key={a.id} style={S.card}>
             <div style={S.face}>
               {a.preview_url
-                ? <img src={a.preview_url} alt={a.name} style={S.img} />
+                ? <img src={toLocal(a.preview_url)} alt={a.name} style={S.img} />
                 : <span style={S.initial}>{(a.name || "?")[0]}</span>}
               {a.region && <span style={S.region}>{cap(a.region)}</span>}
             </div>

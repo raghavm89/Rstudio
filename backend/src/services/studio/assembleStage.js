@@ -89,8 +89,21 @@ const AssembleStage = {
     const plan = decideAssembly({ clips, voice });
 
     if (plan.mode === "passthrough") {
-      // The single clip is the finished reel. Record its key as the deliverable.
-      return { video_key: plan.clips[0], clips: plan.clips, voice: null, passthrough: true };
+      // The single clip IS the finished reel — no re-encode. But it must still be
+      // recorded as a downloadable `reel` asset: the detail page lists
+      // studio_assets, so without this row the reel has nowhere to download from
+      // (only the still shows). Point the asset at the clip already in storage.
+      const clipKey = plan.clips[0];
+      const reelUrl = /^https?:\/\//i.test(clipKey) ? clipKey : storage.readUrl(clipKey);
+      const pl = job.payload || {};
+      await pool.query(`DELETE FROM studio_assets WHERE project_id = $1 AND kind = 'reel'`, [job.project_id]);
+      await pool.query(
+        `INSERT INTO studio_assets
+           (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
+         VALUES ($1,$2,$3,$4,$5,'reel',$6,'fal',$7,'passed',true)`,
+        [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, reelUrl, pl.clip_seconds || null]
+      );
+      return { video_key: clipKey, clips: plan.clips, voice: null, passthrough: true };
     }
 
     const clipUrls = plan.clips.map((k) => storage.readUrl(k));

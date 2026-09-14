@@ -27,6 +27,17 @@ const pool = require('../../config/db');
 // reject everything on day one.
 const UNCALIBRATED_FLOOR = 0.60;
 
+// The confident-identity bar. Calibration is measured on low-variance setup
+// renders, so a per-expression floor (expected - 2σ) can land at 0.76-0.80 —
+// well above what identity requires (ArcFace same-person is >0.6). Real
+// production frames (festive wardrobe, three-quarter poses, busy scenes)
+// legitimately score lower yet are unmistakably the persona, and were being
+// rejected as `below_baseline`. This CAPS how strict a calibrated floor may be:
+// a frame that clears this bar passes regardless. Calibration still governs
+// wherever it is LOOSER than this (a hard expression like laughing), and still
+// catches a genuine miss below it. Tune with STUDIO_QC_IDENTITY_FLOOR.
+const IDENTITY_FLOOR = Number(process.env.STUDIO_QC_IDENTITY_FLOOR) || 0.68;
+
 /**
  * Which embedder measures identity, by avatar subject type.
  *
@@ -186,8 +197,13 @@ const FaceQc = {
 
       const expected  = Number(baseline.expected_similarity);
       const tolerance = Number(baseline.tolerance || 0);
-      const floor     = expected - tolerance;
-      const pass      = similarity >= floor;
+      const calibratedFloor = expected - tolerance;
+      // Calibration may only be as strict as the confident-identity bar. A frame
+      // that clears IDENTITY_FLOOR is the persona and passes even when a tight,
+      // low-variance calibration set would reject it; calibration still governs
+      // where it is looser than the bar.
+      const floor = Math.min(calibratedFloor, IDENTITY_FLOOR);
+      const pass  = similarity >= floor;
 
       return {
         pass,
@@ -195,6 +211,8 @@ const FaceQc = {
         similarity: Number(similarity.toFixed(4)),
         expected: Number(expected.toFixed(4)),
         floor: Number(floor.toFixed(4)),
+        calibratedFloor: Number(calibratedFloor.toFixed(4)),
+        identityFloor: IDENTITY_FLOOR,
         baselineSource: baseline.source,
         // Surfaced so the UI can say "we have not measured 'crying' for her yet"
         // instead of implying a threshold that was never calibrated.

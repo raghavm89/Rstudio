@@ -4,7 +4,7 @@ const pool          = require('../../config/db');
 const RenderJob     = require('../../models/renderJob');
 const Calibration   = require('./calibration');
 const { assemblePrompt, WorkflowError, DIMENSIONS } = require('./comfyui/buildWorkflow');
-const { isPubliclyFetchable } = require('./storageFactory');
+const { isPubliclyFetchable, createStorage } = require('./storageFactory');
 const CreditLedger  = require('./creditLedger');
 
 /**
@@ -407,7 +407,7 @@ async function submit(tenantId, loraId, { userId = null, framings = ['medium'], 
             publicly_fetchable: isPubliclyFetchable(),
             // Named, not looked up. The whole reason this module exists:
             // the row is inactive and the shoot path will not resolve it.
-            lora: { path: row.file_path, scale: 0.95, id: row.lora_id },
+            lora: { path: createStorage().readUrl(row.file_path), scale: 0.95, id: row.lora_id },
             expression_key: preset.key,
             framing,
             filenamePrefix: `calib/${preset.key}-${framing}-${sample}`,

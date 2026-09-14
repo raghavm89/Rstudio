@@ -1,6 +1,8 @@
 'use strict';
 
 const Orchestrator = require('../services/studio/orchestrator');
+const ShootPlanner = require('../services/studio/shootPlanner');
+const Transcribe = require('../services/studio/transcribe');
 const StudioUsage  = require('../models/studioUsage');
 const pool         = require('../config/db');
 
@@ -25,8 +27,8 @@ const pool         = require('../config/db');
 const KINDS = ['post', 'carousel', 'reel', 'short', 'longform'];
 
 const FRAMING = ['close', 'medium', 'wide', 'full'];
-const LIGHT_DIRECTION = ['camera_left', 'camera_right', 'backlit', 'flat', 'window'];
-const LIGHT_QUALITY = ['soft', 'hard', 'diffused'];
+const LIGHT_DIRECTION = ['camera_left', 'camera_right', 'front', 'front_left', 'front_right', 'back_left', 'back_right', 'top'];
+const LIGHT_QUALITY = ['soft', 'hard'];
 const INTENSITY = ['subtle', 'medium', 'strong'];
 
 /**
@@ -150,7 +152,32 @@ exports.progress = async (req, res) => {
   }
 
   const progress = await Orchestrator.progress(req.user.tenant_id, req.params.id);
-  res.json({ project, progress });
+
+  // The finished media: the reel/clip first, then stills that passed QC.
+  const { rows: assets } = await pool.query(
+    `SELECT id, kind, storage_url, qc_status, qc_reason, face_similarity,
+            width, height, seconds, selected, created_at
+       FROM studio_assets
+      WHERE tenant_id = $1 AND project_id = $2 AND storage_url IS NOT NULL
+      ORDER BY (kind IN ('reel','longform','clip','short')) DESC, selected DESC, created_at DESC`,
+    [req.user.tenant_id, req.params.id]
+  );
+
+  // Why a failed shoot failed — the first failed job's stage, label and message.
+  // Surfaced so the detail page can say what went wrong instead of a bare
+  // "Failed", and so a rejected frame can show its QC reason and score.
+  let failure = null;
+  if (project.status === 'failed' || progress.some?.((s) => s.failed)) {
+    const { rows: fj } = await pool.query(
+      `SELECT stage, label, error FROM render_jobs
+        WHERE project_id = $1 AND status = 'failed' AND error IS NOT NULL
+        ORDER BY step_index, id LIMIT 1`,
+      [req.params.id]
+    );
+    if (fj[0]) failure = { stage: fj[0].stage, label: fj[0].label, message: fj[0].error };
+  }
+
+  res.json({ project, progress, assets, failure });
 };
 
 // GET /api/studio/shoots — the tenant's shoots, newest first.
@@ -158,8 +185,14 @@ exports.list = async (req, res) => {
   const tenantId = req.user.tenant_id;
   if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
   const { rows } = await pool.query(
-    `SELECT p.id, p.title, p.kind, p.slot_type, p.status, p.created_at,
+    `SELECT p.id, p.title, p.kind, p.slot_type, p.created_at,
             a.name AS avatar_name,
+            CASE
+              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'failed') THEN 'failed'
+              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status NOT IN ('done','failed','blocked','cancelled')) THEN 'generating'
+              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id) THEN 'done'
+              ELSE p.status
+            END AS status,
             (SELECT COUNT(*) FROM studio_scenes sc
                JOIN studio_shots s ON s.scene_id = sc.id
               WHERE sc.project_id = p.id)::int AS shots
@@ -171,6 +204,49 @@ exports.list = async (req, res) => {
     [tenantId]
   );
   return res.json({ shoots: rows });
+};
+
+exports.plan = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const { avatar_id, idea, kind = 'reel', clip_seconds = 5, frame_count } = req.body || {};
+  if (!avatar_id) return res.status(400).json({ error: 'avatar_id is required' });
+  if (!KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${KINDS.join(', ')}` });
+  try {
+    const out = await ShootPlanner.plan({
+      tenantId,
+      avatarId: Number(avatar_id),
+      idea: String(idea || ''),
+      kind,
+      clipSeconds: Number(clip_seconds) || 5,
+      frameCount: frame_count ? Number(frame_count) : undefined,
+      tier: (req.user.role === 'admin' || req.user.plan_id) ? 'paid' : 'free',
+      userId: req.user.id,
+    });
+    return res.status(201).json(out);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    console.error('[shoot plan]', err);
+    return res.status(500).json({ error: 'Could not plan the shoot' });
+  }
+};
+
+exports.transcribe = async (req, res) => {
+  if (!req.user.tenant_id) return res.status(403).json({ error: 'No tenant on this account' });
+  const { audio_base64, content_type } = req.body || {};
+  if (!audio_base64) return res.status(400).json({ error: 'audio_base64 is required' });
+  let buf;
+  try { buf = Buffer.from(String(audio_base64), 'base64'); } catch { return res.status(400).json({ error: 'audio_base64 is not valid base64' }); }
+  if (!buf.length) return res.status(400).json({ error: 'Empty audio' });
+  if (buf.length > 5 * 1024 * 1024) return res.status(413).json({ error: 'Audio too large — keep it under ~5MB (a short clip).' });
+  try {
+    const text = await Transcribe.transcribe(buf, content_type || 'audio/webm');
+    return res.json({ text });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    console.error('[transcribe]', err);
+    return res.status(500).json({ error: 'Could not transcribe the audio' });
+  }
 };
 
 exports.KINDS = KINDS;

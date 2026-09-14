@@ -1,7 +1,7 @@
 'use strict';
 
 const pool = require('../../config/db');
-const { isPubliclyFetchable } = require('./storageFactory');
+const { isPubliclyFetchable, createStorage } = require('./storageFactory');
 const { buildWorkflow, WorkflowError } = require('./comfyui/buildWorkflow');
 const { deriveMotionPrompt } = require('./motionPrompt');
 
@@ -231,7 +231,7 @@ const PromptStage = {
           guidance: 3.5,
           expected_aspect: EXPECTED_ASPECT,
           publicly_fetchable: isPubliclyFetchable(),
-          lora: { path: row.file_path, scale: 0.95, id: row.lora_id },
+          lora: { path: createStorage().readUrl(row.file_path), scale: 0.95, id: row.lora_id },
           expression_key: shot.expression_key,
           framing: shot.framing,
           filenamePrefix: `shot${shot.seq}`,

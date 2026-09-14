@@ -41,11 +41,40 @@ const server = app.listen(PORT, () => {
   reportPaymentMode();
 });
 
+// ── Inline render worker ──────────────────────────────────────────────────
+// On a single machine one process runs the whole studio: this API and the
+// worker that drains its render queue. The worker is unchanged — still a
+// poll-out loop that talks to this same API over localhost — it is just hosted
+// here instead of in a second terminal. Set RUN_INLINE_WORKER=off to go back to
+// a separate `node worker/index.js`, which is the split you want once renders
+// move onto their own box (and can hold the fal key without the API's secrets).
+let stopInlineWorker = null;
+if (process.env.RUN_INLINE_WORKER !== 'off') {
+  if (!process.env.STUDIO_WORKER_TOKEN) {
+    console.warn('Inline worker: STUDIO_WORKER_TOKEN not set — running API only.');
+  } else {
+    // Default to the full stage set so a single-box operator never has to know
+    // which stages exist. Narrow it with WORKER_STAGES if you split later.
+    process.env.WORKER_STAGES = process.env.WORKER_STAGES
+      || 'still,seed_still,calib_still,lora_train,motion';
+    const worker = require('./worker');
+    stopInlineWorker = worker.stopWorker;
+    // A tick after the socket is up, so the first claim doesn't race the listener.
+    setTimeout(() => {
+      worker.runWorkerLoop().catch((err) => console.error('Inline worker crashed:', err));
+    }, 500);
+    console.log('Inline render worker started (set RUN_INLINE_WORKER=off to run it separately).');
+  }
+}
+
 let shuttingDown = false;
 async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n${signal} received, shutting down...`);
+
+  // Wind the inline worker down first so it claims nothing new while we drain.
+  if (stopInlineWorker) stopInlineWorker();
 
   // Stop accepting new connections; finish in-flight requests.
   server.close((err) => {

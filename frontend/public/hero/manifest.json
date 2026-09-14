@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-09-09T16:29:12.388Z",
+  "generated_at": "2026-09-13T20:49:33.285Z",
   "model": "fal-ai/flux-lora",
   "motion_model": "fal-ai/bytedance/seedance/v1/pro/image-to-video",
-  "seed": 16102004842035894000,
+  "seed": "1411591050394777300",
   "width": 880,
   "height": 1104,
   "poster": "/hero/poster.jpg",
@@ -14,37 +14,37 @@
     {
       "src": "/hero/setup-close.jpg",
       "label": "Close · 85mm",
-      "seed": 2684670782963957000
+      "seed": 16436083504755380000
     },
     {
       "src": "/hero/setup-medium.jpg",
       "label": "Medium · 50mm",
-      "seed": 7131372409853835000
+      "seed": 9283294588713865000
     },
     {
       "src": "/hero/setup-full.jpg",
       "label": "Full · 35mm",
-      "seed": 15414686507086615000
+      "seed": 12659685614359198000
     },
     {
       "src": "/hero/setup-reel.jpg",
       "label": "Reel 9:16",
-      "seed": 10668328937141471000
+      "seed": 9588861991984906000
     },
     {
       "src": "/hero/setup-cover.jpg",
       "label": "Cover",
-      "seed": 6010072052184533000
+      "seed": 15186689271021423000
     },
     {
       "src": "/hero/setup-detail.jpg",
       "label": "Detail",
-      "seed": 17281278331835025000
+      "seed": 4058855449154509000
     }
   ],
-  "lora": "https://v3b.fal.media/files/b/0aa9bbb8/CHVRuxKgzp2JeDsMC1Nbh_pytorch_lora_weights.safetensors",
+  "lora": "https://v3b.fal.media/files/b/0aaa4da8/7exIVdN-WbuJ-APJ2sTkc_pytorch_lora_weights.safetensors",
   "qc": null,
-  "cost_usd": 0.27,
+  "cost_usd": 0.52,
   "auth": {
     "poster": "/hero/auth-poster.jpg",
     "video": "/hero/auth.mp4",

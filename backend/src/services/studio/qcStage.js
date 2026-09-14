@@ -117,7 +117,7 @@ async function runQc(job, deps = {}) {
         verdict = await judge({
           avatarId: p.avatar_id, loraId: p.lora_id, presetKey: p.preset_key, framing: p.framing,
           embedding: m.embedding, referenceEmbedding: reference,
-          detections: { faceCount: Number(m.faces || 0) },
+          detections: { faceCount: Number(m.significant_faces ?? m.faces ?? 0) },
           aspect: m.aspect ?? null, expectedAspect: p.expected_aspect ?? null,
           // person → face rejects apply; character → they are skipped (no face
           // to detect), and identity rides on the CLIP embedding alone.

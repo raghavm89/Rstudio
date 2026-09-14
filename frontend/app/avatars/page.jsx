@@ -4,6 +4,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useResource, Resource } from '../../components/Guard';
 
+// Serve stored media through the same-origin proxy (/api/studio/files/... on
+// :3100 → :3000), never the raw absolute URL: on the ngrok stopgap a direct
+// browser load hits ngrok's warning interstitial and the image breaks.
+function toLocal(u) {
+  if (!u) return u;
+  try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; }
+}
+
 /**
  * The avatar list.
  *
@@ -76,11 +84,16 @@ function List({ d }) {
     <>
       <div className="av-grid">
         {d.avatars.map((a) => (
-          <Link key={a.id} href={`/avatars/${a.id}/face`} className="card bordered av-card">
+          <Link key={a.id} href={`/avatars/${a.id}/${a.trained || a.is_catalogue || a.status === "active" ? "create" : "face"}`} className="card bordered av-card">
+            {a.preview_url && (
+              <div style={{ width: "100%", aspectRatio: "4 / 5", borderRadius: 8, overflow: "hidden", marginBottom: 10, background: "#efece6" }}>
+                <img src={toLocal(a.preview_url)} alt={a.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              </div>
+            )}
             <div className="av-top">
               <h2>{a.name}</h2>
-              <span className={`pill ${a.status === 'active' ? 'ok' : 'warn'}`}>
-                {a.status === 'active' ? 'Ready' : a.trained ? 'Trained' : 'Setting up'}
+              <span className={`pill ${a.is_catalogue || a.status === 'active' ? 'ok' : 'warn'}`}>
+                {a.is_catalogue ? 'Catalogue' : a.status === 'active' ? 'Ready' : a.trained ? 'Trained' : 'Setting up'}
               </span>
             </div>
             <p className="mono av-id">{a.slug}</p>
@@ -127,6 +140,7 @@ function List({ d }) {
  * is the thing worth knowing.
  */
 function progress(a) {
+  if (a.is_catalogue) return a.assets ? `In the catalogue · ${a.assets} images` : 'In the catalogue';
   if (a.trained) return a.assets ? `Trained · ${a.assets} images` : 'Trained';
   if (a.kept) return `${a.kept} of ${a.candidates} photos kept`;
   if (a.candidates) return `${a.candidates} photos to choose from`;

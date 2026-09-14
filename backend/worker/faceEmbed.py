@@ -100,6 +100,18 @@ def analyse(app, path, expect_aspect=None, aspect_tolerance=0.02):
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
     face = max(faces, key=area)
+
+    # How many faces are actually SUBJECTS, not incidental background people?
+    # insightface detects every face it can — a busy street behind a full-body
+    # shot yields pedestrians whose faces are a tiny fraction of the subject's.
+    # The two-faces structural reject is meant to catch a two-SHOT (two people at
+    # comparable scale), so count only faces within a fraction of the primary's
+    # area. The raw `faces` count is still reported above for transparency.
+    _primary_area = area(face)
+    _SIG_FRACTION = 0.25
+    result["significant_faces"] = sum(
+        1 for f in faces if _primary_area > 0 and area(f) >= _SIG_FRACTION * _primary_area
+    )
     x1, y1, x2, y2 = [float(v) for v in face.bbox]
 
     result["embedding"] = [float(v) for v in face.normed_embedding]

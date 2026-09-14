@@ -27,7 +27,7 @@ function categoriesForKind(kind) {
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const STATUS_LABEL = {
   draft: "Draft", generating: "Generating", review: "In review",
-  approved: "Approved", published: "Published", failed: "Failed",
+  approved: "Approved", published: "Published", failed: "Failed", done: "Done",
 };
 
 export default function Shoots() {
@@ -85,7 +85,7 @@ function Row({ s }) {
   return (
     <div style={S.row}>
       <div style={S.rowMain}>
-        <div style={S.title}>{s.title || `${cap(s.kind)} shoot`}</div>
+        <Link href={`/shoots/${s.id}`} style={{ ...S.title, textDecoration: "none", color: "inherit" }}>{s.title || `${cap(s.kind)} shoot`} <span style={{ color: "#5b3df5", fontWeight: 400 }}>→</span></Link>
         <div style={S.meta}>
           {cap(s.kind)} · {s.shots} shot{s.shots === 1 ? "" : "s"}
           {s.avatar_name ? <> · {s.avatar_name}</> : null}

@@ -63,7 +63,9 @@ const QcRunner = {
       return await JobResult.settle(job.id, workerId, report);
     } catch (err) {
       const permanent = err.permanent === true;
-      console.error(`[studio/qcRunner] job ${job.id} failed (${permanent ? "permanent" : "will retry"}): ${err.message}`);
+      const _detail = (err.qcResult && err.qcResult.candidates || [])
+        .map((c) => `${c.reason || "ok"}${c.similarity != null ? ` @${c.similarity}` : ""}`).join(", ");
+      console.error(`[studio/qcRunner] job ${job.id} failed (${permanent ? "permanent" : "will retry"}): ${err.message}${_detail ? ` — candidates: ${_detail}` : ""}`);
       const failed = await this._settleFail(job.id, workerId, err, permanent);
 
       // A shot with no acceptable frame must not have its motion animate a

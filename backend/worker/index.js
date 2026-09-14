@@ -302,19 +302,26 @@ async function main() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    if (shuttingDown) process.exit(1);
-    shuttingDown = true;
-    console.log('\nFinishing current job, then stopping. Press again to force.');
-  });
-}
+// Ask the loop to wind down: finish the job in hand, claim no more. The API
+// process calls this when it is hosting the worker inline; standalone, the
+// signal handlers below do the same.
+function stopWorker() { shuttingDown = true; }
 
 if (require.main === module) {
+  // Only a standalone worker owns the process signals. Hosted inline, the API's
+  // own shutdown governs the process and calls stopWorker() instead.
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+      if (shuttingDown) process.exit(1);
+      shuttingDown = true;
+      console.log('\nFinishing current job, then stopping. Press again to force.');
+    });
+  }
+
   main().catch((err) => {
     console.error('Worker crashed:', err);
     process.exit(1);
   });
 }
 
-module.exports = { runJob, buildProvider, CONFIG, KIND_BY_STAGE };
+module.exports = { runJob, buildProvider, CONFIG, KIND_BY_STAGE, runWorkerLoop: main, stopWorker };

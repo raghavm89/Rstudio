@@ -36,7 +36,7 @@ const CANDIDATES = { free: 1, paid: 4 };
 
 const SECONDS_PER_CLIP = 5;
 
-function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution = '480p' }) {
+function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution = '480p', wantsVoice = false }) {
   const stages = [];
   let step = 0;
   // Runners come from the licence policy, not from literals here. See
@@ -67,11 +67,15 @@ function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution =
     }
     step += 1;
 
-    stages.push({ key: 'voice', stage: 'voice', runner: runner('voice'), after: ['prompt'], label: 'Recording the voice', step: step++ });
+    // A voiceover is opt-in (see createShoot). Without one the reel is a silent
+    // clip — a visual reel should not fail on a voice stage nobody asked for.
+    if (wantsVoice) {
+      stages.push({ key: 'voice', stage: 'voice', runner: runner('voice'), after: ['prompt'], label: 'Recording the voice', step: step++ });
+    }
 
     stages.push({
       key: 'assemble', stage: 'assemble', runner: runner('assemble'), label: 'Putting it together', step: step++,
-      after: [...Array.from({ length: frameCount }, (_, i) => `motion:${i + 1}`), 'voice'],
+      after: [...Array.from({ length: frameCount }, (_, i) => `motion:${i + 1}`), ...(wantsVoice ? ['voice'] : [])],
     });
   }
 
@@ -117,7 +121,6 @@ const Orchestrator = {
 
     const quality    = QUALITY_BY_PLAN[tier] || '1mp';
     const candidates = CANDIDATES[tier] || 1;
-    const { stages, stepTotal } = planFor({ kind, frameCount, clipSeconds, intent, resolution });
 
     const client = await pool.connect();
     try {
@@ -159,6 +162,41 @@ const Orchestrator = {
         );
       }
 
+      // A voiceover is opt-in: scheduled only when the brief carries an explicit
+      // spoken line AND the avatar has a locked voice AND a TTS provider is
+      // configured. A visual reel ("Ganesh Chaturthi glow up") has a concept but
+      // no intended narration — it stays a silent clip rather than failing on a
+      // voice stage. The concept/hook are NOT treated as a spoken line.
+      const spokenLine = brief && (brief.script || brief.voiceover);
+      const wantsVoice = Boolean(
+        spokenLine && String(spokenLine).trim() &&
+        avatar.voice_id &&
+        (avatar.voice_provider || 'elevenlabs') === 'elevenlabs' &&
+        process.env.ELEVENLABS_API_KEY
+      );
+      const { stages, stepTotal } = planFor({ kind, frameCount, clipSeconds, intent, resolution, wantsVoice });
+
+      // ── Vocabulary clamp ─────────────────────────────────────────────────
+      // Every shoot passes through here, so this is where a shot/scene value is
+      // forced to be one the vocabulary defines. A stale template or an
+      // out-of-date picker cannot inject an option the prompt stage rejects
+      // (this is exactly how "light_direction.backlit" reached the renderer).
+      const verRes = await client.query(
+        `SELECT COALESCE(
+           (SELECT vocabulary_version FROM look_profiles  WHERE avatar_id = $1 LIMIT 1),
+           (SELECT vocabulary_version FROM style_profiles WHERE avatar_id = $1 LIMIT 1)) AS v`,
+        [avatarId]
+      );
+      const vocabVersion = verRes.rows[0] && verRes.rows[0].v;
+      const { rows: vocabRows } = await client.query(
+        'SELECT facet, option_key FROM prompt_vocabulary WHERE active AND version = $1',
+        [vocabVersion]
+      );
+      const vocabByFacet = {};
+      for (const r of vocabRows) (vocabByFacet[r.facet] = vocabByFacet[r.facet] || new Set()).add(r.option_key);
+      const clampVocab = (facet, val, fallback) =>
+        (val && vocabByFacet[facet] && vocabByFacet[facet].has(val)) ? val : fallback;
+
       // ── The content graph ──────────────────────────────────────────────────
       const { rows: [project] } = await client.query(
         `INSERT INTO studio_projects (tenant_id, avatar_id, title, kind, slot_type, brief, trend_source, status, created_by)
@@ -170,7 +208,7 @@ const Orchestrator = {
       const { rows: [sceneRow] } = await client.query(
         `INSERT INTO studio_scenes (project_id, seq, location_key, time_of_day, continuity)
          VALUES ($1,1,$2,$3,$4::jsonb) RETURNING *`,
-        [project.id, scene.location_key || null, scene.time_of_day || 'afternoon',
+        [project.id, scene.location_key || null, clampVocab('time_of_day', scene.time_of_day, 'afternoon'),
          JSON.stringify(scene.continuity || {})]
       );
 
@@ -184,8 +222,8 @@ const Orchestrator = {
               duration_seconds, advanced_append)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
           [sceneRow.id, i + 1,
-           s.framing || 'medium', s.light_direction || 'camera_left', s.light_quality || 'soft',
-           s.expression_key || 'neutral', s.expression_intensity || 'medium',
+           clampVocab('framing', s.framing, 'medium'), clampVocab('light_direction', s.light_direction, 'camera_left'), clampVocab('light_quality', s.light_quality, 'soft'),
+           clampVocab('expression', s.expression_key, 'neutral'), s.expression_intensity || 'medium',
            s.wardrobe_key || null, s.pose_key || null,
            kind === 'post' || kind === 'carousel' ? null : clipSeconds,
            s.advanced_append || null]

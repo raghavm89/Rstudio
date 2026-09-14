@@ -27,6 +27,8 @@ class CopyError extends Error {
 }
 
 /** Lazily construct the Anthropic client, or null when no key is configured. */
+const { pickModel } = require('./anthropicModel');
+
 function getAnthropic() {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const Anthropic = require("@anthropic-ai/sdk");
@@ -116,7 +118,7 @@ const CopyStage = {
     const llm = deps.llm || getAnthropic();
     if (!llm) throw new CopyError("No LLM configured — set ANTHROPIC_API_KEY to write captions", { permanent: true });
 
-    const model = deps.model || DEFAULT_MODEL;
+    const model = deps.model || await pickModel(llm, process.env.STUDIO_COPY_MODEL);
     const voice = (ctx.bible && ctx.bible.voice) || {};
     const text = await callLLM(llm, { system: buildSystem(ctx, voice), user: buildUser(ctx), model });
     const { caption, hashtags } = parseCaption(text);

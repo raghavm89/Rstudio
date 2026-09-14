@@ -30,7 +30,10 @@ const Catalogue = {
               a.identity_block, a.disclosure_line, a.subject_type,
               a.voice_provider, a.voice_id,
               (l.id IS NOT NULL) AS ready,
-              a.catalogue_published_at
+              a.catalogue_published_at,
+              (SELECT s2.storage_url FROM studio_assets s2
+                WHERE s2.avatar_id = a.id AND s2.kind IN ('still','thumbnail') AND s2.storage_url IS NOT NULL
+                ORDER BY s2.selected DESC, s2.created_at DESC LIMIT 1) AS preview_url
          FROM avatars a
          LEFT JOIN avatar_loras l ON l.avatar_id = a.id AND l.active
         WHERE a.is_catalogue
