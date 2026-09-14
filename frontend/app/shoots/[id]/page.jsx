@@ -153,7 +153,7 @@ function Detail({ data, onApprove, onRefresh }) {
             {p.avatar_id ? <Link className="btn ghost" href={`/avatars/${p.avatar_id}/create?from=${p.id}`}>✎ Edit the plan</Link> : null}
           </div>
           {regenErr ? <div className="load-err" style={{ marginTop: 8 }}><span>{regenErr}</span></div> : null}
-          <p style={S.rejectHint}>Not right? <b>Regenerate</b> reshoots the frames with the same plan; <b>Edit the plan</b> reopens these scenes to change them (this render stays paused until you approve or regenerate).</p>
+          <p style={S.rejectHint}>Not right? <b>Regenerate</b> reshoots the frames with the same plan; <b>Edit the plan</b> reopens these scenes to change and reshoot this same shoot.</p>
         </div>
       )}
 

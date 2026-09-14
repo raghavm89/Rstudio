@@ -88,6 +88,131 @@ function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution =
   return { stages, stepTotal: step };
 }
 
+/**
+ * Load a shoot that is paused at the Gate 2 review, or refuse. Shared by the
+ * two reject paths (regenerate, replan): both need a held shoot that isn't
+ * already mid-reshoot.
+ */
+async function loadHeldShoot(client, tenantId, projectId) {
+  const { rows: pr } = await client.query(
+    `SELECT p.id, p.kind, p.avatar_id, a.subject_type, l.id AS lora_id
+       FROM studio_projects p
+       JOIN avatars a ON a.id = p.avatar_id
+       LEFT JOIN avatar_loras l ON l.avatar_id = a.id AND l.active
+      WHERE p.id = $1 AND p.tenant_id = $2`,
+    [projectId, tenantId]
+  );
+  const proj = pr[0];
+  if (!proj) throw Object.assign(new Error('Shoot not found'), { status: 404 });
+  const { rows: held } = await client.query(
+    `SELECT 1 FROM render_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = 'held' LIMIT 1`,
+    [projectId, tenantId]
+  );
+  if (!held[0]) throw Object.assign(new Error('These stills are not waiting for review — nothing to change.'), { status: 409 });
+  const { rows: busy } = await client.query(
+    `SELECT 1 FROM render_jobs WHERE project_id = $1 AND status IN ('queued','claimed','running') LIMIT 1`,
+    [projectId]
+  );
+  if (busy[0]) throw Object.assign(new Error('New frames are already on the way — give it a moment.'), { status: 409 });
+  return proj;
+}
+
+/**
+ * The closed-vocabulary clamp for an avatar — the same gate createShoot uses,
+ * so a replanned shot can never inject an option the prompt stage would reject.
+ */
+async function loadVocabClamp(client, avatarId) {
+  const verRes = await client.query(
+    `SELECT COALESCE(
+       (SELECT vocabulary_version FROM look_profiles  WHERE avatar_id = $1 LIMIT 1),
+       (SELECT vocabulary_version FROM style_profiles WHERE avatar_id = $1 LIMIT 1)) AS v`,
+    [avatarId]
+  );
+  const version = verRes.rows[0] && verRes.rows[0].v;
+  const { rows } = await client.query(
+    'SELECT facet, option_key FROM prompt_vocabulary WHERE active AND version = $1',
+    [version]
+  );
+  const byFacet = {};
+  for (const r of rows) (byFacet[r.facet] = byFacet[r.facet] || new Set()).add(r.option_key);
+  return (facet, val, fallback) => (val && byFacet[facet] && byFacet[facet].has(val)) ? val : fallback;
+}
+
+/**
+ * Supersede a shoot's current stills and enqueue a fresh prompt -> still -> qc
+ * pass (new seeds) for every shot, holding the motion jobs where they are. The
+ * shared core of both "regenerate stills" and "edit the plan" — the caller has
+ * already loaded and gate-checked the shoot.
+ */
+async function enqueueFreshStillPass(client, { tenantId, projectId, proj }) {
+  const { rows: shots } = await client.query(
+    `SELECT sh.id AS shot_id, sh.seq, sh.scene_id
+       FROM studio_shots sh
+       JOIN studio_scenes sc ON sc.id = sh.scene_id
+      WHERE sc.project_id = $1
+      ORDER BY sh.seq`,
+    [projectId]
+  );
+  if (!shots.length) throw Object.assign(new Error('This shoot has no shots'), { status: 409 });
+
+  const { rows: pj } = await client.query(
+    `SELECT payload FROM render_jobs WHERE project_id = $1 AND stage = 'prompt' ORDER BY id DESC LIMIT 1`,
+    [projectId]
+  );
+  const prev = (pj[0] && pj[0].payload) || {};
+  const candidates = Math.max(1, Number(prev.candidates) || 1);
+  const quality = prev.quality || '1mp';
+  const resolution = prev.resolution || '480p';
+
+  const perStill = creditCostFor({ stage: 'still' });
+  const totalCredits = perStill * shots.length;
+  if (totalCredits) await StudioUsage.reserve(client, tenantId, 'credits', totalCredits);
+
+  await client.query(
+    `UPDATE studio_assets SET qc_status = 'superseded', selected = false
+      WHERE project_id = $1 AND kind = 'still'`,
+    [projectId]
+  );
+
+  const { rows: mx } = await client.query('SELECT COALESCE(MAX(step_index), -1) AS m FROM render_jobs WHERE project_id = $1', [projectId]);
+  let step = Number(mx[0].m) + 1;
+  const runner = (stage) => RunnerPolicy.runnerFor(stage, { intent: 'cloud' });
+
+  const promptJob = await RenderJob.enqueueTx(client, {
+    tenant_id: tenantId, project_id: projectId, stage: 'prompt', runner: runner('prompt'),
+    priority: 100, step_index: step, step_total: 0, label: 'Re-working the shots',
+    payload: { avatar_id: proj.avatar_id, lora_id: proj.lora_id, quality, candidates, resolution },
+  });
+  step += 1;
+
+  const newIds = [promptJob.id];
+  for (const sh of shots) {
+    const stillJob = await RenderJob.enqueueTx(client, {
+      tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
+      stage: 'still', runner: runner('still'), priority: 100,
+      depends_on: [promptJob.id], step_index: step, step_total: 0,
+      label: `Photo ${sh.seq} (new)`,
+      payload: {
+        avatar_id: proj.avatar_id, lora_id: proj.lora_id, scene_id: sh.scene_id,
+        subject_type: proj.subject_type, quality, candidates, resolution,
+        _reserved: perStill, _from_credits: 0,
+      },
+    });
+    const qcJob = await RenderJob.enqueueTx(client, {
+      tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
+      stage: 'qc', runner: runner('qc'), priority: 100,
+      depends_on: [stillJob.id], step_index: step, step_total: 0,
+      label: `Checking photo ${sh.seq} (new)`,
+      payload: { avatar_id: proj.avatar_id },
+    });
+    newIds.push(stillJob.id, qcJob.id);
+  }
+  step += 1;
+
+  await client.query('UPDATE render_jobs SET step_total = $2 WHERE id = ANY($1::int[])', [newIds, step]);
+  return { shots: shots.length, candidates, credits: totalCredits };
+}
+
 const Orchestrator = {
   planFor,
 
@@ -499,110 +624,88 @@ const Orchestrator = {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const proj = await loadHeldShoot(client, tenantId, projectId);
+      const { shots, candidates, credits } = await enqueueFreshStillPass(client, { tenantId, projectId, proj });
+      await client.query("UPDATE studio_projects SET status = 'generating' WHERE id = $1 AND tenant_id = $2", [projectId, tenantId]);
+      await client.query('COMMIT');
+      return { project_id: projectId, shots, candidates, reserved: { credits } };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
 
-      const { rows: pr } = await client.query(
-        `SELECT p.id, p.kind, p.avatar_id, a.subject_type, l.id AS lora_id
-           FROM studio_projects p
-           JOIN avatars a ON a.id = p.avatar_id
-           LEFT JOIN avatar_loras l ON l.avatar_id = a.id AND l.active
-          WHERE p.id = $1 AND p.tenant_id = $2`,
-        [projectId, tenantId]
-      );
-      const proj = pr[0];
-      if (!proj) throw Object.assign(new Error('Shoot not found'), { status: 404 });
+  /**
+   * Edit-the-plan, in place. The other reject path: the user reopened this
+   * shoot's storyboard, changed the scenes, and wants THIS shoot reshot with the
+   * new plan — not a brand-new shoot. We rewrite each shot/scene to the edited
+   * values (through the same vocabulary clamp), then run a fresh still pass with
+   * the motion jobs still held. The beat COUNT is fixed here — the held motion
+   * graph is one job per shot, so changing how many scenes there are is a new
+   * shoot, not an edit.
+   */
+  async replan({ tenantId, projectId, userId = null, scenes: editedScenes = null }) {
+    if (!Array.isArray(editedScenes) || !editedScenes.length) {
+      throw Object.assign(new Error('scenes[] is required — reopen the plan first'), { status: 400 });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const proj = await loadHeldShoot(client, tenantId, projectId);
 
-      // Only meaningful at the review gate: there must be HELD downstream jobs
-      // (motion/assemble/copy) waiting on the frames.
-      const { rows: held } = await client.query(
-        `SELECT 1 FROM render_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = 'held' LIMIT 1`,
-        [projectId, tenantId]
-      );
-      if (!held[0]) {
-        throw Object.assign(new Error('These stills are not waiting for review — nothing to regenerate.'), { status: 409 });
-      }
-      // Not already regenerating.
-      const { rows: busy } = await client.query(
-        `SELECT 1 FROM render_jobs WHERE project_id = $1 AND status IN ('queued','claimed','running') LIMIT 1`,
-        [projectId]
-      );
-      if (busy[0]) throw Object.assign(new Error('New frames are already on the way — give it a moment.'), { status: 409 });
-
-      // The shots to re-shoot, in order.
       const { rows: shots } = await client.query(
-        `SELECT sh.id AS shot_id, sh.seq, sh.scene_id
+        `SELECT sh.id AS shot_id, sh.scene_id, sh.seq
            FROM studio_shots sh
            JOIN studio_scenes sc ON sc.id = sh.scene_id
           WHERE sc.project_id = $1
           ORDER BY sh.seq`,
         [projectId]
       );
-      if (!shots.length) throw Object.assign(new Error('This shoot has no shots'), { status: 409 });
 
-      // Reuse the pool size / quality / resolution the shoot was built with.
-      const { rows: pj } = await client.query(
-        `SELECT payload FROM render_jobs WHERE project_id = $1 AND stage = 'prompt' ORDER BY id DESC LIMIT 1`,
-        [projectId]
-      );
-      const prevPayload = (pj[0] && pj[0].payload) || {};
-      const candidates = Math.max(1, Number(prevPayload.candidates) || 1);
-      const quality = prevPayload.quality || '1mp';
-      const resolution = prevPayload.resolution || '480p';
-
-      // Money: one still charge per shot (the still job renders `candidates`
-      // frames for that flat cost). Reserved up front so the pass cannot get
-      // half-queued and then refused.
-      const perStill = creditCostFor({ stage: 'still' });
-      const totalCredits = perStill * shots.length;
-      if (totalCredits) await StudioUsage.reserve(client, tenantId, 'credits', totalCredits);
-
-      // Retire the current candidates: out of the picker, out of QC, deselected.
-      await client.query(
-        `UPDATE studio_assets SET qc_status = 'superseded', selected = false
-          WHERE project_id = $1 AND kind = 'still'`,
-        [projectId]
-      );
-
-      const { rows: mx } = await client.query('SELECT COALESCE(MAX(step_index), -1) AS m FROM render_jobs WHERE project_id = $1', [projectId]);
-      let step = Number(mx[0].m) + 1;
-      const runner = (stage) => RunnerPolicy.runnerFor(stage, { intent: 'cloud' });
-
-      // Fresh prompt job — re-assembles each shot's prompt (new seeds) and writes
-      // it onto the new still jobs that depend on it.
-      const promptJob = await RenderJob.enqueueTx(client, {
-        tenant_id: tenantId, project_id: projectId, stage: 'prompt', runner: runner('prompt'),
-        priority: 100, step_index: step, step_total: 0, label: 'Re-working the shots',
-        payload: { avatar_id: proj.avatar_id, lora_id: proj.lora_id, quality, candidates, resolution },
-      });
-      step += 1;
-
-      const newIds = [promptJob.id];
-      for (const sh of shots) {
-        const stillJob = await RenderJob.enqueueTx(client, {
-          tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
-          stage: 'still', runner: runner('still'), priority: 100,
-          depends_on: [promptJob.id], step_index: step, step_total: 0,
-          label: `Photo ${sh.seq} (new)`,
-          payload: {
-            avatar_id: proj.avatar_id, lora_id: proj.lora_id, scene_id: sh.scene_id,
-            subject_type: proj.subject_type, quality, candidates, resolution,
-            _reserved: perStill, _from_credits: 0,
-          },
-        });
-        const qcJob = await RenderJob.enqueueTx(client, {
-          tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
-          stage: 'qc', runner: runner('qc'), priority: 100,
-          depends_on: [stillJob.id], step_index: step, step_total: 0,
-          label: `Checking photo ${sh.seq} (new)`,
-          payload: { avatar_id: proj.avatar_id },
-        });
-        newIds.push(stillJob.id, qcJob.id);
+      // The editor sends one card per beat (one shot each); flatten defensively.
+      const cards = [];
+      for (const sc of editedScenes) {
+        const scShots = Array.isArray(sc.shots) && sc.shots.length ? sc.shots : [{}];
+        for (const sh of scShots) {
+          cards.push({ time_of_day: sc.time_of_day, continuity: sc.continuity || {}, shot: sh || {} });
+        }
       }
-      step += 1;
+      if (cards.length !== shots.length) {
+        throw Object.assign(new Error('Changing the number of scenes starts a new shoot. Here you can edit the existing scenes and reshoot them.'), { status: 409 });
+      }
 
-      await client.query('UPDATE render_jobs SET step_total = $2 WHERE id = ANY($1::int[])', [newIds, step]);
+      const clampVocab = await loadVocabClamp(client, proj.avatar_id);
+
+      // Apply each edited card to its shot (and the shot's scene), in order.
+      for (let i = 0; i < shots.length; i += 1) {
+        const sh = shots[i];
+        const c = cards[i];
+        const s = c.shot || {};
+        await client.query(
+          `UPDATE studio_shots
+              SET framing = $2, light_direction = $3, light_quality = $4,
+                  expression_key = $5, expression_intensity = $6, pose_key = $7
+            WHERE id = $1`,
+          [sh.shot_id,
+           clampVocab('framing', s.framing, 'medium'),
+           clampVocab('light_direction', s.light_direction, 'camera_left'),
+           clampVocab('light_quality', s.light_quality, 'soft'),
+           clampVocab('expression', s.expression_key, 'neutral'),
+           s.expression_intensity || 'medium',
+           s.pose_key || null]
+        );
+        await client.query(
+          `UPDATE studio_scenes SET time_of_day = $2, continuity = $3::jsonb WHERE id = $1`,
+          [sh.scene_id, clampVocab('time_of_day', c.time_of_day, 'afternoon'), JSON.stringify(c.continuity || {})]
+        );
+      }
+
+      const { shots: n, candidates, credits } = await enqueueFreshStillPass(client, { tenantId, projectId, proj });
       await client.query("UPDATE studio_projects SET status = 'generating' WHERE id = $1 AND tenant_id = $2", [projectId, tenantId]);
       await client.query('COMMIT');
-      return { project_id: projectId, shots: shots.length, candidates, reserved: { credits: totalCredits } };
+      return { project_id: projectId, shots: n, candidates, reserved: { credits } };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

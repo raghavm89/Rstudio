@@ -71,6 +71,7 @@ function Idea({ avatarId }) {
         brief: pl.brief || {}, kind: pl.kind || "reel",
         clipSeconds: pl.clipSeconds || 5, scenes: pl.scenes || [],
         candidates: (pl.candidates != null ? pl.candidates : undefined), plan_id: null,
+        from_shoot: pl.from_shoot || null,
       }))
       .catch((e) => setErr(errorText(e)))
       .finally(() => setLoadingFrom(false));
@@ -281,8 +282,14 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
   async function generate() {
     setErr(null); setBusy(true);
     try {
-      await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: plan.brief || {}, scenes, plan_id: plan.plan_id, candidates: plan.candidates });
-      router.push("/shoots");
+      if (plan.from_shoot) {
+        // Editing an existing shoot: revise it in place and reshoot its stills.
+        await post(`/shoots/${plan.from_shoot}/replan`, { scenes });
+        router.push(`/shoots/${plan.from_shoot}`);
+      } else {
+        await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: plan.brief || {}, scenes, plan_id: plan.plan_id, candidates: plan.candidates });
+        router.push("/shoots");
+      }
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
   }
 
@@ -290,8 +297,8 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
     <section style={S.card}>
       <div style={S.sbHead}>
         <div>
-          <h2 style={S.h2}>Review the plan</h2>
-          <p className="hint" style={{ marginTop: 0 }}>This is exactly what Studio will make. Edit anything — nothing is generated and no credits are spent until you approve.</p>
+          <h2 style={S.h2}>{plan.from_shoot ? "Edit the plan" : "Review the plan"}</h2>
+          <p className="hint" style={{ marginTop: 0 }}>{plan.from_shoot ? "Change any scene, then reshoot the stills for this same shoot. The number of scenes is fixed here — to add or remove scenes, start a new shoot." : "This is exactly what Studio will make. Edit anything — nothing is generated and no credits are spent until you approve."}</p>
         </div>
         <button type="button" onClick={onBack} style={S.back}>← Start over</button>
       </div>
@@ -301,7 +308,7 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
           <div key={i} style={S.sbScene}>
             <div style={S.sbSceneTop}>
               <span style={S.sbNo}>{motion ? `Scene ${i + 1}` : `Shot ${i + 1}`}</span>
-              {scenes.length > 1 ? <button type="button" style={S.rm} onClick={() => removeScene(i)}>Remove</button> : null}
+              {!plan.from_shoot && scenes.length > 1 ? <button type="button" style={S.rm} onClick={() => removeScene(i)}>Remove</button> : null}
             </div>
             <label style={S.f}><span style={S.fl}>Where</span><input value={(s.continuity && s.continuity.location_text) || ""} onChange={(e) => setCont(i, "location_text", e.target.value)} style={S.in} /></label>
             <label style={S.f}><span style={S.fl}>Wardrobe</span><input value={(s.continuity && s.continuity.wardrobe_text) || ""} onChange={(e) => setCont(i, "wardrobe_text", e.target.value)} style={S.in} /></label>
@@ -316,7 +323,7 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
         ))}
       </div>
       {err ? <div className="load-err" style={{ margin: "10px 0" }}><span>{err}</span></div> : null}
-      <button className="btn" style={S.go} disabled={busy || !scenes.length} onClick={generate}>{busy ? "Generating…" : `Approve & generate${motion && scenes.length ? ` (${scenes.length} scene${scenes.length === 1 ? "" : "s"})` : ""} →`}</button>
+      <button className="btn" style={S.go} disabled={busy || !scenes.length} onClick={generate}>{busy ? (plan.from_shoot ? "Reshooting…" : "Generating…") : (plan.from_shoot ? "Save changes & reshoot stills →" : `Approve & generate${motion && scenes.length ? ` (${scenes.length} scene${scenes.length === 1 ? "" : "s"})` : ""} →`)}</button>
     </section>
   );
 }

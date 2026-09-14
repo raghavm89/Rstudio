@@ -387,12 +387,22 @@ exports.shootPlan = async (req, res) => {
     });
   }
 
-  const outScenes = scenes.map((sc) => ({
-    time_of_day: sc.time_of_day || 'afternoon',
-    location_key: sc.location_key || undefined,
-    continuity: (sc.continuity && typeof sc.continuity === 'object') ? sc.continuity : {},
-    shots: shotsByScene.get(sc.id) || [{}],
-  }));
+  // One card per BEAT: the create-page editor is one shot per scene card, so a
+  // shoot stored as one scene with N shots (older multi-beat era) still reopens
+  // as N editable cards, each carrying its scene's shared location/wardrobe/time.
+  const outScenes = [];
+  for (const sc of scenes) {
+    const scShots = shotsByScene.get(sc.id) || [{}];
+    const cont = (sc.continuity && typeof sc.continuity === 'object') ? sc.continuity : {};
+    for (const sh of scShots) {
+      outScenes.push({
+        time_of_day: sc.time_of_day || 'afternoon',
+        location_key: sc.location_key || undefined,
+        continuity: cont,
+        shots: [sh],
+      });
+    }
+  }
 
   const firstDur = shots.length ? Number(shots[0].duration_seconds) : 0;
   const clipSeconds = Number.isFinite(firstDur) && firstDur >= 2 ? firstDur : 5;
@@ -499,6 +509,30 @@ exports.regenerateStills = async (req, res) => {
   try {
     const result = await Orchestrator.regenerateStills({ tenantId, projectId, userId: req.user.id });
     return res.status(201).json(result);
+  } catch (err) {
+    if (err.code === StudioUsage.QUOTA_EXCEEDED) {
+      return res.status(402).json({ error: err.message, code: err.code, metric: err.metric, remaining: err.remaining, limit: err.limit });
+    }
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    throw err;
+  }
+};
+
+/**
+ * Edit-the-plan applied to the SAME shoot: rewrite this shoot's scenes/shots to
+ * the edited storyboard and reshoot its stills (motion stays held). Keeps the
+ * shoot's identity — no new project — so "edit the plan" is a revision, not a
+ * fork.
+ */
+exports.replan = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+  const { scenes } = req.body || {};
+  if (!Array.isArray(scenes) || !scenes.length) return res.status(400).json({ error: 'scenes[] is required — reopen the plan first' });
+  try {
+    const result = await Orchestrator.replan({ tenantId, projectId, userId: req.user.id, scenes });
+    return res.status(200).json(result);
   } catch (err) {
     if (err.code === StudioUsage.QUOTA_EXCEEDED) {
       return res.status(402).json({ error: err.message, code: err.code, metric: err.metric, remaining: err.remaining, limit: err.limit });
