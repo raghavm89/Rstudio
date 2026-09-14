@@ -132,6 +132,7 @@ router.post('/shoots/plan',            authorize(...TENANT_ROLES), asyncHandler(
 router.post('/shoots/generate',        authorize(...TENANT_ROLES), asyncHandler(shootCtrl.generate));
 router.post('/transcribe',             authorize(...TENANT_ROLES), asyncHandler(shootCtrl.transcribe));
 router.get ('/shoots/:id',             authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.progress));
+router.get ('/shoots/:id/plan',        authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.shootPlan));
 router.post('/shoots/:id/approve',      authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.approve));
 router.post('/shoots/:id/select-still', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.selectStill));
 router.post('/shoots/:id/reanimate',    authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.reanimate));

@@ -150,10 +150,10 @@ function Detail({ data, onApprove, onRefresh }) {
           <div style={S.reviewActions}>
             <button className="btn" disabled={approving || regenning} onClick={doApprove}>{approving ? "Releasing…" : "Approve & animate →"}</button>
             <button className="btn ghost" disabled={approving || regenning} onClick={regen} title="Render a fresh set of stills to pick from — new frames, same plan.">{regenning ? "Reshooting…" : "↻ Regenerate stills"}</button>
-            {p.avatar_id ? <Link className="btn ghost" href={`/avatars/${p.avatar_id}/create`}>✎ Edit the plan</Link> : null}
+            {p.avatar_id ? <Link className="btn ghost" href={`/avatars/${p.avatar_id}/create?from=${p.id}`}>✎ Edit the plan</Link> : null}
           </div>
           {regenErr ? <div className="load-err" style={{ marginTop: 8 }}><span>{regenErr}</span></div> : null}
-          <p style={S.rejectHint}>Not right? <b>Regenerate</b> reshoots the frames with the same plan; <b>Edit the plan</b> starts a new one where you can change the scenes.</p>
+          <p style={S.rejectHint}>Not right? <b>Regenerate</b> reshoots the frames with the same plan; <b>Edit the plan</b> reopens these scenes to change them (this render stays paused until you approve or regenerate).</p>
         </div>
       )}
 

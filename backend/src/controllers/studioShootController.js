@@ -342,6 +342,97 @@ exports.selectStill = async (req, res) => {
 };
 
 /**
+ * Reconstruct a shoot's plan (the editable storyboard) from its stored scenes
+ * and shots, in the exact shape the create-page planner emits — so "Edit the
+ * plan" at Gate 2 reopens THIS shoot's scenes to change, rather than a blank
+ * idea box. Read-only; renders nothing and spends nothing.
+ */
+exports.shootPlan = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+
+  const { rows: proj } = await pool.query(
+    'SELECT id, title, kind, avatar_id FROM studio_projects WHERE id = $1 AND tenant_id = $2',
+    [projectId, tenantId]
+  );
+  if (!proj[0]) return res.status(404).json({ error: 'Shoot not found' });
+
+  const { rows: scenes } = await pool.query(
+    `SELECT id, seq, location_key, time_of_day, continuity
+       FROM studio_scenes WHERE project_id = $1 ORDER BY seq`,
+    [projectId]
+  );
+  const sceneIds = scenes.map((s) => s.id);
+  const { rows: shots } = sceneIds.length
+    ? await pool.query(
+        `SELECT scene_id, seq, framing, light_direction, light_quality,
+                expression_key, expression_intensity, wardrobe_key, pose_key, duration_seconds
+           FROM studio_shots WHERE scene_id = ANY($1::int[]) ORDER BY scene_id, seq`,
+        [sceneIds]
+      )
+    : { rows: [] };
+
+  const shotsByScene = new Map();
+  for (const sh of shots) {
+    if (!shotsByScene.has(sh.scene_id)) shotsByScene.set(sh.scene_id, []);
+    shotsByScene.get(sh.scene_id).push({
+      pose_key: sh.pose_key || '',
+      framing: sh.framing || 'medium',
+      expression_key: sh.expression_key || 'soft_smile',
+      light_direction: sh.light_direction || undefined,
+      light_quality: sh.light_quality || undefined,
+      expression_intensity: sh.expression_intensity || undefined,
+      wardrobe_key: sh.wardrobe_key || undefined,
+    });
+  }
+
+  const outScenes = scenes.map((sc) => ({
+    time_of_day: sc.time_of_day || 'afternoon',
+    location_key: sc.location_key || undefined,
+    continuity: (sc.continuity && typeof sc.continuity === 'object') ? sc.continuity : {},
+    shots: shotsByScene.get(sc.id) || [{}],
+  }));
+
+  const firstDur = shots.length ? Number(shots[0].duration_seconds) : 0;
+  const clipSeconds = Number.isFinite(firstDur) && firstDur >= 2 ? firstDur : 5;
+
+  // The candidate-pool size the shoot was built with, so the Stills slider
+  // reopens where it was. Best-effort.
+  let candidates = null;
+  try {
+    const { rows: pj } = await pool.query(
+      `SELECT payload FROM render_jobs WHERE project_id = $1 AND stage = 'prompt' ORDER BY id DESC LIMIT 1`,
+      [projectId]
+    );
+    const c = pj[0] && pj[0].payload && Number(pj[0].payload.candidates);
+    if (Number.isFinite(c) && c > 0) candidates = c;
+  } catch (_) {}
+
+  // The LLM concept line, if the self-learning capture recorded it.
+  let brief = {};
+  try {
+    const { rows: pf } = await pool.query(
+      `SELECT approved_plan FROM plan_feedback
+        WHERE project_id = $1 AND approved_plan IS NOT NULL ORDER BY id DESC LIMIT 1`,
+      [projectId]
+    );
+    const ap = pf[0] && pf[0].approved_plan;
+    if (ap && ap.brief && typeof ap.brief === 'object') brief = ap.brief;
+  } catch (_) {}
+
+  return res.json({
+    from_shoot: projectId,
+    avatar_id: proj[0].avatar_id,
+    kind: proj[0].kind,
+    clipSeconds,
+    brief,
+    scenes: outScenes,
+    candidates,
+  });
+};
+
+/**
  * Approve the stills and release the video (Gate 2). Flips this shoot's HELD
  * jobs (motion, voice, assemble, copy) to queued so the render continues — the
  * one step that lets the expensive, drift-prone motion run, taken only after a

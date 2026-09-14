@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { post, errorText } from "../../../../lib/api";
+import { get, post, errorText } from "../../../../lib/api";
 import { useResource, Resource } from "../../../../components/Guard";
 
 /**
@@ -57,6 +57,24 @@ function Idea({ avatarId }) {
   const [err, setErr] = useState(null);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [loadingFrom, setLoadingFrom] = useState(false);
+
+  // Reopen an existing shoot's plan (Gate 2 "Edit the plan") in the storyboard
+  // editor, rather than a blank idea box. ?from=<shootId> carries which one.
+  useEffect(() => {
+    let from = null;
+    try { from = new URLSearchParams(window.location.search).get("from"); } catch (_) {}
+    if (!from) return;
+    setLoadingFrom(true);
+    get(`/shoots/${from}/plan`)
+      .then((pl) => setPlan({
+        brief: pl.brief || {}, kind: pl.kind || "reel",
+        clipSeconds: pl.clipSeconds || 5, scenes: pl.scenes || [],
+        candidates: (pl.candidates != null ? pl.candidates : undefined), plan_id: null,
+      }))
+      .catch((e) => setErr(errorText(e)))
+      .finally(() => setLoadingFrom(false));
+  }, []);
   const recRef = useRef(null);
   const fileRef = useRef(null);
   const motion = (FORMATS.find((f) => f.key === kind) || {}).motion;
@@ -121,6 +139,7 @@ function Idea({ avatarId }) {
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
   }
 
+  if (loadingFrom) return <section style={S.card}><p className="hint">Reopening your plan…</p></section>;
   if (plan) return <Storyboard plan={plan} setPlan={setPlan} avatarId={avatarId} onBack={() => setPlan(null)} />;
 
   return (
