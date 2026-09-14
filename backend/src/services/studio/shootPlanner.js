@@ -65,25 +65,41 @@ function extractJson(text) {
   catch { throw new PlanError('The planner returned malformed JSON — try again.', { status: 502 }); }
 }
 
-function buildSystem(nShots, motion) {
-  return [
+function buildSystem(kind, motion, n) {
+  const head = [
     'You are a creative director for short-form social video aimed at an Indian audience (Instagram Reels, YouTube Shorts).',
-    "Turn the creator's idea into a concrete shoot plan. Be specific and culturally grounded — real Indian settings, festivals, food, wardrobe where relevant.",
+    "Turn the creator's idea into a concrete shoot plan. Be specific and culturally grounded - real Indian settings, festivals, food, wardrobe where relevant.",
     "You control ONLY the setting, wardrobe, mood and camera. You NEVER change the creator's face or identity; that is fixed.",
-    'Output ONLY a single JSON object — no prose, no markdown fences — in exactly this shape:',
+    'Output ONLY a single JSON object - no prose, no markdown fences.',
+  ];
+  const enums = '"framing": "' + FRAMING.join('|') + '", "light_direction": "' + LIGHT_DIRECTION.join('|') + '", "light_quality": "' + LIGHT_QUALITY.join('|') + '", "expression_key": "' + EXPRESSION.join('|') + '"';
+  const tail = 'Use ONLY the allowed enum values for framing, light_direction, light_quality and expression_key. Put anything descriptive into the text fields (location_text, wardrobe_text, action).';
+  if (motion) {
+    return head.concat([
+      'Shape:',
+      '{',
+      '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
+      '  "scenes": [ { "time_of_day": "' + TIME_OF_DAY.join('|') + '", "location_text": "where she is plus any equipment or props, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase", ' + enums + ', "action": "what she is DOING in the photo: the exact posture and how she interacts with equipment, props or the subject (for example: gripping the lat-pulldown bar overhead and pulling it toward her chest, side view, back engaged). Not merely standing and posing unless the idea is purely aesthetic", "motion": "how she MOVES in the video: the movement to animate (for example: she pulls the bar down to her chest, then lets it rise back up). For a talking scene: she speaks to the camera with natural hand gestures" } ]',
+      '}',
+      'First identify the content TYPE from the idea: a how-to or demonstration (SHOW the action), a talking explainer (she addresses the camera), or a lifestyle or aesthetic piece (mood and looks). Direct each scene like a real person on set: what she is DOING, her posture, and how she interacts with equipment, props or the subject.',
+      'Choose framing to fit the content: for a physical demonstration use full or wide so the action is visible (a close-up cannot show an exercise); for a talking explainer use medium facing the camera; for lifestyle, vary it.',
+      (n === 1
+        ? 'Produce exactly 1 scene that carries the idea, with a real action and a real motion.'
+        : ('Produce exactly ' + n + ' scenes, each animated and stitched IN ORDER into one reel that MOVES as a mini story with a beginning, middle and end. For a how-to, make each scene a DIFFERENT step or exercise. Each scene has its OWN location_text, wardrobe_text and time_of_day (she can travel between them), plus its own action and motion. Keep the SAME person throughout; wardrobe may change between scenes if the story calls for it.')),
+      'Fill both "action" and "motion" for every scene.',
+      tail,
+    ]).join('\n');
+  }
+  return head.concat([
+    'Shape:',
     '{',
-    '  "brief": { "concept": "one vivid sentence describing the video", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
+    '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
     '  "scene": { "time_of_day": "' + TIME_OF_DAY.join('|') + '", "location_text": "where she is, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase" },',
-    '  "shots": [ { "framing": "' + FRAMING.join('|') + '", "light_direction": "' + LIGHT_DIRECTION.join('|') + '", "light_quality": "' + LIGHT_QUALITY.join('|') + '", "expression_key": "' + EXPRESSION.join('|') + '", "action": "what she is doing in this shot, one short phrase" } ]',
+    '  "shots": [ { ' + enums + ', "action": "what she is doing in this shot, one short phrase" } ]',
     '}',
-    'Produce exactly ' + nShots + ' shot' + (nShots === 1 ? '' : 's') + '.',
-    motion
-      ? (nShots === 1
-          ? 'This is a single motion clip: give one strong hero shot the video will animate from.'
-          : ('This is a REEL told as ' + nShots + ' short beats, each animated and then stitched IN ORDER into one video. Make the shots a SEQUENCE that tells the idea as a mini story with a clear beginning, middle and end. Keep the SAME person and continuity \u2014 one outfit and one place, unless the idea itself moves her \u2014 but make every beat a distinct MOMENT with its own camera framing and action (for example: an establishing wide, a medium action beat, a close reaction). Vary framing and expression across the beats so the cuts feel intentional. Each shot\'s "action" is what she is doing in that beat.'))
-      : 'Vary framing across the shots so the set reads well together.',
-    'Use ONLY the allowed enum values for framing, light_direction, light_quality and expression_key. Put anything descriptive into the text fields (location_text, wardrobe_text, action).',
-  ].join('\n');
+    'Produce exactly ' + n + ' shot' + (n === 1 ? '' : 's') + '. Vary framing across the shots so the set reads well together.',
+    tail,
+  ]).join('\n');
 }
 
 async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, frameCount, tier = 'free', intent = 'cloud', userId = null } = {}, deps = {}) {
@@ -100,12 +116,12 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   const llm = deps.llm || getAnthropic();
   if (!llm) throw new PlanError('Idea planning needs an LLM — set ANTHROPIC_API_KEY in the backend .env (the caption writer needs it too).', { status: 503, code: 'NO_LLM' });
 
-  const nShots = shotsForKind(kind, frameCount);
+  const nUnits = shotsForKind(kind, frameCount);
   const motion = MOTION.has(kind);
-  const system = buildSystem(nShots, motion);
+  const system = buildSystem(kind, motion, nUnits);
   const user = [
     'Creator: ' + av.name + (av.identity_block ? ' — ' + clip(av.identity_block, 400) : ''),
-    'Format: ' + kind + (motion ? ' (' + nShots + ' beat' + (nShots === 1 ? '' : 's') + ' x ' + clipSeconds + 's, ~' + (nShots * clipSeconds) + 's total)' : ''),
+    'Format: ' + kind + (motion ? (nUnits === 1 ? ' (1 scene, ' + clipSeconds + 's)' : ' (' + nUnits + ' scenes x ' + clipSeconds + 's, ~' + (nUnits * clipSeconds) + 's total)') : ''),
     'Idea: ' + clip(idea, 800),
   ].join('\n');
 
@@ -114,25 +130,54 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   const textBlock = (resp.content || []).find((b) => b.type === 'text') || (resp.content || [])[0];
   const parsed = extractJson(textBlock && textBlock.text);
 
-  const shots = (Array.isArray(parsed.shots) ? parsed.shots : []).slice(0, nShots).map((s) => ({
-    framing: oneOf(s && s.framing, FRAMING, 'medium'),
-    light_direction: oneOf(s && s.light_direction, LIGHT_DIRECTION, 'camera_left'),
-    light_quality: oneOf(s && s.light_quality, LIGHT_QUALITY, 'soft'),
-    expression_key: oneOf(s && s.expression_key, EXPRESSION, 'soft_smile'),
-    expression_intensity: 'medium',
-    advanced_append: clip(s && s.action, 200) || undefined,
-  }));
-  while (shots.length < nShots) {
-    shots.push({ framing: 'medium', light_direction: 'window', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' });
+  let scenesOut = null;
+  let scene = null;
+  let shots = null;
+  if (motion) {
+    // Each scene = its own place / outfit / time + one shot; stitched in order.
+    const raw = Array.isArray(parsed.scenes) ? parsed.scenes : [];
+    scenesOut = raw.slice(0, nUnits).map((sc) => ({
+      time_of_day: oneOf(sc && sc.time_of_day, TIME_OF_DAY, 'afternoon'),
+      continuity: {
+        location_text: clip(sc && sc.location_text, 300),
+        wardrobe_text: clip(sc && sc.wardrobe_text, 300),
+        motion_text: clip(sc && sc.motion, 300) || undefined,
+      },
+      shots: [{
+        framing: oneOf(sc && sc.framing, FRAMING, 'medium'),
+        light_direction: oneOf(sc && sc.light_direction, LIGHT_DIRECTION, 'camera_left'),
+        light_quality: oneOf(sc && sc.light_quality, LIGHT_QUALITY, 'soft'),
+        expression_key: oneOf(sc && sc.expression_key, EXPRESSION, 'soft_smile'),
+        expression_intensity: 'medium',
+        pose_key: clip(sc && sc.action, 240) || null,
+        advanced_append: undefined,
+      }],
+    }));
+    while (scenesOut.length < nUnits) {
+      scenesOut.push({ time_of_day: 'afternoon', continuity: { location_text: '', wardrobe_text: '' },
+        shots: [{ framing: 'medium', light_direction: 'camera_left', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' }] });
+    }
+  } else {
+    shots = (Array.isArray(parsed.shots) ? parsed.shots : []).slice(0, nUnits).map((s) => ({
+      framing: oneOf(s && s.framing, FRAMING, 'medium'),
+      light_direction: oneOf(s && s.light_direction, LIGHT_DIRECTION, 'camera_left'),
+      light_quality: oneOf(s && s.light_quality, LIGHT_QUALITY, 'soft'),
+      expression_key: oneOf(s && s.expression_key, EXPRESSION, 'soft_smile'),
+      expression_intensity: 'medium',
+      pose_key: clip(s && s.action, 240) || null,
+      advanced_append: undefined,
+    }));
+    while (shots.length < nUnits) {
+      shots.push({ framing: 'medium', light_direction: 'camera_left', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' });
+    }
+    scene = {
+      time_of_day: oneOf(parsed.scene && parsed.scene.time_of_day, TIME_OF_DAY, 'afternoon'),
+      continuity: {
+        location_text: clip(parsed.scene && parsed.scene.location_text, 300),
+        wardrobe_text: clip(parsed.scene && parsed.scene.wardrobe_text, 300),
+      },
+    };
   }
-
-  const scene = {
-    time_of_day: oneOf(parsed.scene && parsed.scene.time_of_day, TIME_OF_DAY, 'afternoon'),
-    continuity: {
-      location_text: clip(parsed.scene && parsed.scene.location_text, 300),
-      wardrobe_text: clip(parsed.scene && parsed.scene.wardrobe_text, 300),
-    },
-  };
 
   const concept = clip(parsed.brief && parsed.brief.concept, 500) || clip(idea, 500);
   const brief = {
@@ -143,10 +188,14 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
     trend_source: 'idea',
   };
 
-  const shoot = await Orchestrator.createShoot({
-    tenantId, avatarId, userId, kind, frameCount: shots.length, clipSeconds, brief, scene, shots, tier, intent,
-  });
-  return { shoot, plan: { brief, scene, shots } };
+  // Planning is SIDE-EFFECT-FREE: it returns the storyboard for the user to
+  // review and edit. Nothing is rendered and no credit is spent until they
+  // approve and call generate (POST /shoots/generate). Scenes are unified so
+  // motion and non-motion review the same shape.
+  const scenes = motion
+    ? scenesOut
+    : [{ time_of_day: scene.time_of_day, continuity: scene.continuity, shots }];
+  return { brief, kind, clipSeconds, scenes };
 }
 
 module.exports = { plan, PlanError, FRAMING, LIGHT_DIRECTION, LIGHT_QUALITY, EXPRESSION, TIME_OF_DAY };

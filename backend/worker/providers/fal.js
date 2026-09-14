@@ -58,7 +58,11 @@ const ENDPOINTS = {
   // point of the step this serves. A different endpoint from `still` because
   // flux-lora requires an adapter and refuses without one.
   seed_still: process.env.FAL_BASE_MODEL   || 'fal-ai/flux/dev',
-  motion:     process.env.FAL_MOTION_MODEL || 'bytedance/seedance-2.0/image-to-video',
+  // Seedance 2.0 added a partner face/likeness filter that refuses photorealistic
+  // human faces (content_policy_violation / partner_validation_failed) - a
+  // dealbreaker for a realistic human avatar. Seedance v1 pro has no such filter
+  // and is the model that animated Aanya's hero clip. Override with FAL_MOTION_MODEL.
+  motion:     process.env.FAL_MOTION_MODEL || 'fal-ai/bytedance/seedance/v1/pro/image-to-video',
   lora_train: process.env.FAL_LORA_TRAINER || 'fal-ai/flux-lora-fast-training',
 };
 

@@ -8,6 +8,10 @@ const path = require("path");
 
 const execFileP = promisify(execFile);
 
+// The ffmpeg binary. Defaults to the one on PATH; FFMPEG_PATH points at an
+// explicit binary (e.g. Homebrew's, or an ffmpeg-static path) when it is not.
+const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
+
 /**
  * Stitch motion clips (and an optional voiceover) into one MP4 with ffmpeg.
  *
@@ -51,7 +55,7 @@ async function runFfmpeg({ clipUrls, voiceUrl = null, fetchImpl = globalThis.fet
       args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", out);
     }
 
-    await execFileP("ffmpeg", args, { maxBuffer: 1 << 26 });
+    await execFileP(FFMPEG, args, { maxBuffer: 1 << 26 });
     return await fs.readFile(out);
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -60,9 +64,9 @@ async function runFfmpeg({ clipUrls, voiceUrl = null, fetchImpl = globalThis.fet
 
 async function assertFfmpeg() {
   try {
-    await execFileP("ffmpeg", ["-version"], { maxBuffer: 1 << 20 });
+    await execFileP(FFMPEG, ["-version"], { maxBuffer: 1 << 20 });
   } catch {
-    const e = new Error("ffmpeg is not installed on the server — the assemble stage needs it to stitch clips");
+    const e = new Error("ffmpeg is not installed on the server (the API host) — the assemble stage needs it to stitch clips. Install it (macOS: `brew install ffmpeg`) or set FFMPEG_PATH to a binary.");
     e.permanent = true;
     throw e;
   }

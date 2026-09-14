@@ -24,6 +24,9 @@ const FORMATS = [
 ];
 const CATEGORY_LABEL = { ad_video: "Ad video", viral_video: "Viral video", viral_stills: "Viral stills" };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const FRAMINGS = ["close", "medium", "wide", "full"];
+const EXPRESSIONS = ["neutral", "soft_smile", "confident", "laughing", "shy"];
+const TIMES = ["morning", "midday", "afternoon", "golden", "night"];
 
 export default function Page({ params }) {
   return (
@@ -48,6 +51,7 @@ function Idea({ avatarId }) {
   const [kind, setKind] = useState("reel");
   const [clip, setClip] = useState(5);
   const [beats, setBeats] = useState(3);   // reel = a storyboard of N beats, stitched
+  const [plan, setPlan] = useState(null);   // the reviewable storyboard, before generating
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [recording, setRecording] = useState(false);
@@ -111,10 +115,12 @@ function Idea({ avatarId }) {
     if (!idea.trim()) { setErr("Describe the video first."); return; }
     setBusy(true);
     try {
-      await post("/shoots/plan", { avatar_id: Number(avatarId), idea: idea.trim(), kind, clip_seconds: clip, ...(motion ? { frame_count: beats } : {}) });
-      router.push("/shoots");
+      const p = await post("/shoots/plan", { avatar_id: Number(avatarId), idea: idea.trim(), kind, clip_seconds: clip, ...(motion ? { frame_count: beats } : {}) });
+      setPlan({ ...p, clipSeconds: p.clipSeconds || clip });
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
   }
+
+  if (plan) return <Storyboard plan={plan} setPlan={setPlan} avatarId={avatarId} onBack={() => setPlan(null)} />;
 
   return (
     <section style={S.card}>
@@ -156,13 +162,13 @@ function Idea({ avatarId }) {
               <input type="range" min={2} max={10} value={clip} onChange={(e) => setClip(Number(e.target.value))} />
               <span style={S.clipVal}>{clip}s</span>
             </label>
-            <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} cuts` : ""}</span>
+            <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} scenes` : ""}</span>
           </div>
         )}
       </div>
       {err && <div className="load-err" style={{ margin: "10px 0" }}><span>{err}</span></div>}
       <button className="btn" style={S.go} disabled={busy} onClick={go}>
-        {busy ? "Planning your video…" : "Generate video →"}
+        {busy ? "Planning…" : "Plan your video →"}
       </button>
     </section>
   );
@@ -228,6 +234,68 @@ function Interactive() {
   );
 }
 
+function Storyboard({ plan, setPlan, avatarId, onBack }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const scenes = plan.scenes || [];
+  const motion = ["reel", "short", "longform"].includes(plan.kind);
+
+  function patchScene(i, fn) {
+    setPlan((prev) => ({
+      ...prev,
+      scenes: prev.scenes.map((s, j) =>
+        j === i ? fn({ ...s, continuity: { ...(s.continuity || {}) }, shots: [{ ...((s.shots && s.shots[0]) || {}) }] }) : s),
+    }));
+  }
+  const setCont = (i, k, v) => patchScene(i, (s) => { s.continuity[k] = v; return s; });
+  const setTime = (i, v) => patchScene(i, (s) => { s.time_of_day = v; return s; });
+  const setShot = (i, k, v) => patchScene(i, (s) => { s.shots[0][k] = v; return s; });
+  const removeScene = (i) => setPlan((prev) => ({ ...prev, scenes: prev.scenes.filter((_, j) => j !== i) }));
+
+  async function generate() {
+    setErr(null); setBusy(true);
+    try {
+      await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: plan.brief || {}, scenes, plan_id: plan.plan_id });
+      router.push("/shoots");
+    } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
+  }
+
+  return (
+    <section style={S.card}>
+      <div style={S.sbHead}>
+        <div>
+          <h2 style={S.h2}>Review the plan</h2>
+          <p className="hint" style={{ marginTop: 0 }}>This is exactly what Studio will make. Edit anything — nothing is generated and no credits are spent until you approve.</p>
+        </div>
+        <button type="button" onClick={onBack} style={S.back}>← Start over</button>
+      </div>
+      {plan.brief && plan.brief.concept ? <div style={S.concept}>{plan.brief.concept}</div> : null}
+      <div style={S.sbScenes}>
+        {scenes.map((s, i) => (
+          <div key={i} style={S.sbScene}>
+            <div style={S.sbSceneTop}>
+              <span style={S.sbNo}>{motion ? `Scene ${i + 1}` : `Shot ${i + 1}`}</span>
+              {scenes.length > 1 ? <button type="button" style={S.rm} onClick={() => removeScene(i)}>Remove</button> : null}
+            </div>
+            <label style={S.f}><span style={S.fl}>Where</span><input value={(s.continuity && s.continuity.location_text) || ""} onChange={(e) => setCont(i, "location_text", e.target.value)} style={S.in} /></label>
+            <label style={S.f}><span style={S.fl}>Wardrobe</span><input value={(s.continuity && s.continuity.wardrobe_text) || ""} onChange={(e) => setCont(i, "wardrobe_text", e.target.value)} style={S.in} /></label>
+            <label style={S.f}><span style={S.fl}>Action (what she is doing)</span><textarea rows={2} value={(s.shots && s.shots[0] && s.shots[0].pose_key) || ""} onChange={(e) => setShot(i, "pose_key", e.target.value)} style={S.ta2} /></label>
+            {motion ? <label style={S.f}><span style={S.fl}>Motion (what moves in the video)</span><textarea rows={2} value={(s.continuity && s.continuity.motion_text) || ""} onChange={(e) => setCont(i, "motion_text", e.target.value)} style={S.ta2} /></label> : null}
+            <div style={S.selRow}>
+              <label style={S.sel}><span style={S.fl}>Framing</span><select value={(s.shots && s.shots[0] && s.shots[0].framing) || "medium"} onChange={(e) => setShot(i, "framing", e.target.value)} style={S.selEl}>{FRAMINGS.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
+              <label style={S.sel}><span style={S.fl}>Expression</span><select value={(s.shots && s.shots[0] && s.shots[0].expression_key) || "soft_smile"} onChange={(e) => setShot(i, "expression_key", e.target.value)} style={S.selEl}>{EXPRESSIONS.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
+              <label style={S.sel}><span style={S.fl}>Time</span><select value={s.time_of_day || "afternoon"} onChange={(e) => setTime(i, e.target.value)} style={S.selEl}>{TIMES.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
+            </div>
+          </div>
+        ))}
+      </div>
+      {err ? <div className="load-err" style={{ margin: "10px 0" }}><span>{err}</span></div> : null}
+      <button className="btn" style={S.go} disabled={busy || !scenes.length} onClick={generate}>{busy ? "Generating…" : `Approve & generate${motion && scenes.length ? ` (${scenes.length} scene${scenes.length === 1 ? "" : "s"})` : ""} →`}</button>
+    </section>
+  );
+}
+
 const S = {
   wrap: { maxWidth: 720 },
   card: { border: "1px solid #e6e1d8", borderRadius: 14, background: "#fff", padding: "22px 24px", marginBottom: 8 },
@@ -243,6 +311,21 @@ const S = {
   ctlLbl: { fontSize: 12, color: "#8a8478", marginRight: 2 },
   total: { fontSize: 12, color: "#8a8478", fontVariantNumeric: "tabular-nums" },
   go: { fontSize: 15, padding: "11px 24px" },
+  sbHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  back: { border: "none", background: "none", color: "#5b3df5", fontSize: 13, cursor: "pointer", padding: 0 },
+  concept: { fontSize: 14, color: "#5a554c", fontStyle: "italic", margin: "6px 0 14px" },
+  sbScenes: { display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 },
+  sbScene: { border: "1px solid #e6e1d8", borderRadius: 10, padding: "12px 14px", background: "#fdfcfa" },
+  sbSceneTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  sbNo: { fontSize: 13, fontWeight: 600, color: "#141414" },
+  rm: { border: "none", background: "none", color: "#b04a4a", fontSize: 12, cursor: "pointer" },
+  f: { display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 },
+  fl: { fontSize: 11, color: "#8a8478", textTransform: "uppercase", letterSpacing: ".04em" },
+  in: { border: "1px solid #d8d2c8", borderRadius: 8, padding: "7px 10px", fontSize: 14, background: "#fff", boxSizing: "border-box", width: "100%" },
+  ta2: { border: "1px solid #d8d2c8", borderRadius: 8, padding: "7px 10px", fontSize: 14, background: "#fff", boxSizing: "border-box", width: "100%", resize: "vertical", lineHeight: 1.4 },
+  selRow: { display: "flex", gap: 10, flexWrap: "wrap" },
+  sel: { display: "flex", flexDirection: "column", gap: 3, flex: "1 1 120px" },
+  selEl: { border: "1px solid #d8d2c8", borderRadius: 8, padding: "6px 8px", fontSize: 13, background: "#fff" },
   tools: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "10px 0 2px" },
   tool: { border: "1px solid #d8d2c8", background: "#fff", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 13 },
   toolRec: { background: "#fdecec", borderColor: "#e6b0b0", color: "#b04a4a" },

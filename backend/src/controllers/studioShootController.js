@@ -3,6 +3,7 @@
 const Orchestrator = require('../services/studio/orchestrator');
 const ShootPlanner = require('../services/studio/shootPlanner');
 const Transcribe = require('../services/studio/transcribe');
+const PlanFeedback = require('../services/studio/planFeedback');
 const StudioUsage  = require('../models/studioUsage');
 const pool         = require('../config/db');
 
@@ -155,7 +156,7 @@ exports.progress = async (req, res) => {
 
   // The finished media: the reel/clip first, then stills that passed QC.
   const { rows: assets } = await pool.query(
-    `SELECT id, kind, storage_url, qc_status, qc_reason, face_similarity,
+    `SELECT id, kind, shot_id, candidate_index, storage_url, qc_status, qc_reason, face_similarity,
             width, height, seconds, selected, created_at
        FROM studio_assets
       WHERE tenant_id = $1 AND project_id = $2 AND storage_url IS NOT NULL
@@ -189,7 +190,8 @@ exports.list = async (req, res) => {
             a.name AS avatar_name,
             CASE
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'failed') THEN 'failed'
-              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status NOT IN ('done','failed','blocked','cancelled')) THEN 'generating'
+              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status IN ('queued','claimed','running')) THEN 'generating'
+              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'held') THEN 'review'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id) THEN 'done'
               ELSE p.status
             END AS status,
@@ -223,12 +225,152 @@ exports.plan = async (req, res) => {
       tier: (req.user.role === 'admin' || req.user.plan_id) ? 'paid' : 'free',
       userId: req.user.id,
     });
-    return res.status(201).json(out);
+    // Capture the proposal for the self-learning loop, and thread its id so
+    // generate can attach the approved (edited) plan. Best-effort: never fail a
+    // plan over a logging error.
+    let planId = null;
+    try {
+      planId = await PlanFeedback.recordProposal({
+        tenantId, avatarId: Number(avatar_id), userId: req.user.id,
+        idea: String(idea || ''), kind, clipSeconds: Number(clip_seconds) || 5, proposedPlan: out,
+      });
+    } catch (e) { console.error('[plan feedback]', e.message); }
+    // A preview, not a creation: nothing was rendered and no credit spent. The
+    // user reviews/edits the storyboard, then calls generate to actually build.
+    return res.status(200).json({ ...out, plan_id: planId });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
     console.error('[shoot plan]', err);
     return res.status(500).json({ error: 'Could not plan the shoot' });
   }
+};
+
+/**
+ * Generate from an approved (and possibly edited) storyboard. This is the ONLY
+ * step that renders and spends — the plan the user saw and confirmed is exactly
+ * what gets built. Tier comes from the session, never the body; the orchestrator
+ * clamps every vocabulary field and caps the shot count.
+ */
+exports.generate = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const { avatar_id, kind = 'reel', clip_seconds = 5, brief = {}, scenes, idempotency_key = null, intent = 'cloud', plan_id = null } = req.body || {};
+  if (!Number.isInteger(Number(avatar_id))) return res.status(400).json({ error: 'avatar_id is required' });
+  if (!KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${KINDS.join(', ')}` });
+  if (!Array.isArray(scenes) || !scenes.length) return res.status(400).json({ error: 'scenes[] is required — plan the shoot first' });
+  const clipSeconds = Number(clip_seconds);
+  if (!Number.isFinite(clipSeconds) || clipSeconds < 2 || clipSeconds > 10) {
+    return res.status(400).json({ error: 'clip_seconds must be between 2 and 10' });
+  }
+  if (typeof brief !== 'object' || brief === null || Array.isArray(brief)) {
+    return res.status(400).json({ error: 'brief must be an object' });
+  }
+  try {
+    const result = await Orchestrator.createShoot({
+      tenantId,
+      avatarId: Number(avatar_id),
+      userId: req.user.id,
+      kind,
+      brief,
+      scenes,
+      tier: (req.user.role === 'admin' || req.user.plan_id) ? 'paid' : 'free',
+      clipSeconds,
+      idempotencyKey: idempotency_key,
+      intent,
+    });
+    // Attach the approved (possibly edited) plan + the shoot to the feedback row.
+    try {
+      await PlanFeedback.recordApproval({
+        id: plan_id, tenantId,
+        approvedPlan: { brief, kind, clip_seconds: clipSeconds, scenes },
+        projectId: result && result.project && result.project.id,
+      });
+    } catch (e) { console.error('[plan feedback]', e.message); }
+    return res.status(201).json(result);
+  } catch (err) {
+    if (err.code === StudioUsage.QUOTA_EXCEEDED) {
+      return res.status(402).json({ error: err.message, code: err.code, metric: err.metric, remaining: err.remaining, limit: err.limit });
+    }
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    throw err;
+  }
+};
+
+/**
+ * Choose which candidate still wins a scene, during the Gate 2 review. Marks it
+ * selected (clearing the others for that shot) and re-points the shot's HELD
+ * motion job at the chosen frame — so the video animates the still the human
+ * picked, not only QC's automatic best. Allowed only while the motion is still
+ * held (before it runs).
+ */
+exports.selectStill = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+  const shotId = Number(req.body && req.body.shot_id);
+  const assetId = Number(req.body && req.body.asset_id);
+  if (!shotId || !assetId) return res.status(400).json({ error: 'shot_id and asset_id are required' });
+
+  const { rows: a } = await pool.query(
+    `SELECT id, storage_url FROM studio_assets
+      WHERE id = $1 AND project_id = $2 AND shot_id = $3 AND tenant_id = $4 AND kind = 'still'`,
+    [assetId, projectId, shotId, tenantId]
+  );
+  if (!a[0]) return res.status(404).json({ error: 'Still not found for this scene' });
+
+  const { rows: m } = await pool.query(
+    `SELECT id, payload, status FROM render_jobs
+      WHERE project_id = $1 AND stage = 'motion' AND shot_id = $2 ORDER BY id LIMIT 1`,
+    [projectId, shotId]
+  );
+  if (m[0] && m[0].status !== 'held') {
+    return res.status(409).json({ error: 'This scene is already being animated — the still cannot be changed now.' });
+  }
+
+  await pool.query(`UPDATE studio_assets SET selected = false WHERE project_id = $1 AND shot_id = $2 AND kind = 'still'`, [projectId, shotId]);
+  await pool.query(`UPDATE studio_assets SET selected = true WHERE id = $1`, [assetId]);
+  if (m[0]) {
+    const gen = { ...((m[0].payload && m[0].payload.generation) || {}), image_url: a[0].storage_url };
+    await pool.query(
+      `UPDATE render_jobs SET payload = jsonb_set(payload, '{generation}', $2::jsonb, true), updated_at = NOW() WHERE id = $1`,
+      [m[0].id, JSON.stringify(gen)]
+    );
+  }
+  return res.json({ ok: true });
+};
+
+/**
+ * Approve the stills and release the video (Gate 2). Flips this shoot's HELD
+ * jobs (motion, voice, assemble, copy) to queued so the render continues — the
+ * one step that lets the expensive, drift-prone motion run, taken only after a
+ * human has seen the frames.
+ */
+exports.approve = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+
+  const { rows: proj } = await pool.query(
+    'SELECT id FROM studio_projects WHERE id = $1 AND tenant_id = $2',
+    [projectId, tenantId]
+  );
+  if (!proj[0]) return res.status(404).json({ error: 'Shoot not found' });
+
+  const { rowCount } = await pool.query(
+    `UPDATE render_jobs SET status = 'queued', updated_at = NOW()
+      WHERE project_id = $1 AND tenant_id = $2 AND status = 'held'`,
+    [projectId, tenantId]
+  );
+  if (!rowCount) {
+    return res.status(409).json({ error: 'Nothing to approve — this shoot is not waiting for review.' });
+  }
+  await pool.query(
+    `UPDATE studio_projects SET status = 'generating' WHERE id = $1 AND tenant_id = $2`,
+    [projectId, tenantId]
+  );
+  // Strongest "good plan" signal for the learner: a human approved these frames.
+  try { await PlanFeedback.markStillsApproved(projectId, tenantId); } catch (e) { console.error('[plan feedback]', e.message); }
+  return res.json({ ok: true, released: rowCount });
 };
 
 exports.transcribe = async (req, res) => {

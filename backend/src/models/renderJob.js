@@ -258,20 +258,21 @@ const RenderJob = {
     stage, runner = 'server', provider = null, priority = 100,
     payload = {}, max_attempts = 3, idempotency_key = null,
     depends_on = [], step_index = null, step_total = null, label = null,
+    status = 'queued',
   }) {
     const { rows } = await client.query(
       `INSERT INTO render_jobs
          (tenant_id, project_id, shot_id, post_id, stage, runner, provider,
           priority, payload, max_attempts, idempotency_key,
-          depends_on, step_index, step_total, label)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12::int[],$13,$14,$15)
+          depends_on, step_index, step_total, label, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12::int[],$13,$14,$15,$16)
        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
          DO NOTHING
        RETURNING *`,
       [
         tenant_id, project_id, shot_id, post_id, stage, runner, provider,
         priority, JSON.stringify(payload), max_attempts, idempotency_key,
-        depends_on, step_index, step_total, label,
+        depends_on, step_index, step_total, label, status,
       ]
     );
     // A conflict means this exact request already produced a job. Return the

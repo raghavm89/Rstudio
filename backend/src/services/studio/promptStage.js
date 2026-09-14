@@ -137,15 +137,17 @@ const PromptStage = {
       // One fewer query on the path between a claimed job and a submitted
       // render, as a side effect.
 
-      const { rows: sceneRows } = await client.query(
-        'SELECT id, location_key, time_of_day, continuity FROM studio_scenes WHERE id = $1',
-        [job.payload?.scene_id]
-      );
-      const scene = sceneRows[0] || {};
-
+      // Every shot carries its OWN scene. A multi-location reel has several
+      // scenes, each with its own location/wardrobe/time — so a shot's prompt
+      // must use its scene's continuity, not one shared scene. Ordered by the
+      // global shot seq so shot N lines up with still N (enqueue order).
       const { rows: shots } = await client.query(
-        'SELECT * FROM studio_shots WHERE scene_id = $1 ORDER BY seq',
-        [scene.id]
+        `SELECT sh.*, sc.location_key AS scene_location_key,
+                sc.time_of_day AS scene_time_of_day, sc.continuity AS scene_continuity
+           FROM studio_shots sh JOIN studio_scenes sc ON sc.id = sh.scene_id
+          WHERE sc.project_id = $1
+          ORDER BY sh.seq`,
+        [job.project_id]
       );
 
       // The still jobs waiting on this one. Ordered by id so shot N lines up with
@@ -195,10 +197,10 @@ const PromptStage = {
               pose_key: shot.pose_key,
               advanced_append: shot.advanced_append,
             },
-            scene: { location_key: scene.location_key, time_of_day: scene.time_of_day },
+            scene: { location_key: shot.scene_location_key, time_of_day: shot.scene_time_of_day },
             vocabulary,
-            locationText: scene.continuity?.location_text || '',
-            wardrobeText: scene.continuity?.wardrobe_text || '',
+            locationText: (shot.scene_continuity && shot.scene_continuity.location_text) || '',
+            wardrobeText: (shot.scene_continuity && shot.scene_continuity.wardrobe_text) || '',
             quality,
             backend,
             seed: seedFor(job.id, shot.id, 0),

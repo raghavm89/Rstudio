@@ -26,10 +26,20 @@ const BY_FRAMING = {
   wide:   "a slow, steady camera drift with gentle ambient movement in the scene",
 };
 
-/** Derive a short, appearance-free motion instruction for one shot. */
+/**
+ * Derive a short motion instruction for one shot.
+ *
+ * When the planner supplied a MOTION hint for the scene (what the subject
+ * actually DOES on camera — "she pulls the lat bar down to her chest and lets it
+ * rise" — for a demo or an action reel), animate that, so the video shows the
+ * action rather than a static pose under a camera glide. The face-hold BASE
+ * still rides along to keep identity stable. Without a hint (a lifestyle or
+ * portrait scene) it falls back to the framing-based camera move.
+ */
 function deriveMotionPrompt(shot = {}) {
-  const framing = BY_FRAMING[shot.framing] || BY_FRAMING.medium;
-  return `${framing}. ${BASE}`;
+  const hint = shot && shot.scene_continuity && String(shot.scene_continuity.motion_text || '').trim();
+  const move = hint || BY_FRAMING[shot.framing] || BY_FRAMING.medium;
+  return `${move}. ${BASE}`;
 }
 
 module.exports = { deriveMotionPrompt, BASE, BY_FRAMING };

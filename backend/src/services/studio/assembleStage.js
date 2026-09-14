@@ -119,6 +119,20 @@ const AssembleStage = {
       { kind: "reel" }
     );
 
+    // Record the stitched reel as a downloadable asset. JobUpload.store only
+    // uploads the bytes; without this row the detail page (which lists
+    // studio_assets) shows the stills but not the finished reel.
+    const reelUrl = asset.url || (asset.key ? storage.readUrl(asset.key) : null);
+    const pl = job.payload || {};
+    await pool.query(`DELETE FROM studio_assets WHERE project_id = $1 AND kind = 'reel'`, [job.project_id]);
+    await pool.query(
+      `INSERT INTO studio_assets
+         (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
+       VALUES ($1,$2,$3,$4,$5,'reel',$6,'ffmpeg',$7,'passed',true)`,
+      [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, reelUrl,
+       (Number(pl.clip_seconds) || 5) * (plan.clips.length || 1)]
+    );
+
     return {
       video_key: asset.key || asset.url || null,
       clips: plan.clips,

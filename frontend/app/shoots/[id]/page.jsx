@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-import { get } from "../../../lib/api";
+import { get, post } from "../../../lib/api";
 
 /**
  * One shoot: live progress, then the finished video/stills with a Download.
@@ -23,20 +23,27 @@ export default function Page({ params }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const timer = useRef(null);
+  const alive = useRef(true);
+
+  const tick = useCallback(async () => {
+    try {
+      const d = await get(`/shoots/${id}`);
+      if (!alive.current) return;
+      setData(d); setErr(null);
+      if (d && d.progress && d.progress.status === "running") timer.current = setTimeout(tick, 4000);
+    } catch (e) { if (alive.current) setErr(String((e && e.message) || e)); }
+  }, [id]);
 
   useEffect(() => {
-    let alive = true;
-    async function tick() {
-      try {
-        const d = await get(`/shoots/${id}`);
-        if (!alive) return;
-        setData(d); setErr(null);
-        if (d && d.progress && d.progress.status === "running") timer.current = setTimeout(tick, 4000);
-      } catch (e) { if (alive) setErr(String((e && e.message) || e)); }
-    }
+    alive.current = true;
     tick();
-    return () => { alive = false; if (timer.current) clearTimeout(timer.current); };
-  }, [id]);
+    return () => { alive.current = false; if (timer.current) clearTimeout(timer.current); };
+  }, [id, tick]);
+
+  async function approve() {
+    await post(`/shoots/${id}/approve`);
+    tick();
+  }
 
   return (
     <>
@@ -45,7 +52,7 @@ export default function Page({ params }) {
       </div>
       <div className="page">
         {err && <div className="load-err" style={{ marginBottom: 12 }}><span>{err}</span></div>}
-        {!data ? <p className="hint">Loading…</p> : <Detail data={data} />}
+        {!data ? <p className="hint">Loading…</p> : <Detail data={data} onApprove={approve} onRefresh={tick} />}
       </div>
     </>
   );
@@ -61,14 +68,27 @@ const QC_REASON = {
 };
 const qcReason = (r) => QC_REASON[r] || (r ? String(r).replace(/_/g, " ") : "rejected");
 
-function Detail({ data }) {
+function Detail({ data, onApprove, onRefresh }) {
   const p = data.project || {};
   const pr = data.progress || {};
   const assets = data.assets || [];
   const done = pr.status === "done";
   const failed = pr.status === "failed";
-  const statusText = failed ? "Failed" : done ? "Done" : "Generating";
-  const statusColor = failed ? "#b04a4a" : done ? "#2f7d4f" : "#8a7d3a";
+  const review = pr.status === "review";
+  const [approving, setApproving] = useState(false);
+  const statusText = failed ? "Failed" : done ? "Done" : review ? "Ready to review" : "Generating";
+  const statusColor = failed ? "#b04a4a" : done ? "#2f7d4f" : review ? "#5b3df5" : "#8a7d3a";
+  async function doApprove() { setApproving(true); try { await onApprove(); } catch (_) {} finally { setApproving(false); } }
+  const stills = assets.filter((a) => a.kind === "still");
+  const videos = assets.filter((a) => isVideo(a.kind));
+  const shotIds = [...new Set(stills.map((a) => a.shot_id))].sort((x, y) => (x || 0) - (y || 0));
+  const shown = [...videos, ...stills.filter((a) => a.selected)];
+  const [selecting, setSelecting] = useState(null);
+  async function pick(shotId, assetId) {
+    setSelecting(assetId);
+    try { await post(`/shoots/${p.id}/select-still`, { shot_id: shotId, asset_id: assetId }); if (onRefresh) await onRefresh(); }
+    catch (_) {} finally { setSelecting(null); }
+  }
 
   return (
     <div style={S.wrap}>
@@ -90,6 +110,32 @@ function Detail({ data }) {
         ))}
       </div>
 
+      {review && (
+        <div style={S.reviewBox}>
+          <div style={S.reviewHead}>Review your stills — pick the best for each scene</div>
+          <div style={S.reviewMsg}>Nothing is animated yet, and no video renders until you approve. {shotIds.length} scene{shotIds.length === 1 ? "" : "s"}, {stills.length} candidate{stills.length === 1 ? "" : "s"}. Tap a frame to choose it (a ✓ marks the pick); then approve to animate the chosen ones.</div>
+          <div style={S.sceneGroups}>
+            {shotIds.map((sid, si) => {
+              const cands = stills.filter((a) => a.shot_id === sid).sort((a, b) => (a.candidate_index || 0) - (b.candidate_index || 0));
+              return (
+                <div key={sid} style={S.sceneGroup}>
+                  <div style={S.sceneLbl}>Scene {si + 1}</div>
+                  <div style={S.cands}>
+                    {cands.map((a) => (
+                      <button key={a.id} type="button" onClick={() => pick(sid, a.id)} disabled={selecting === a.id} style={{ ...S.cand, ...(a.selected ? S.candOn : {}), opacity: selecting === a.id ? 0.5 : 1 }} title={a.face_similarity != null ? `match ${a.face_similarity}` : ""}>
+                        <img src={toLocal(a.storage_url)} alt="" style={S.candImg} />
+                        {a.selected ? <span style={S.candTick}>✓</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <button className="btn" style={{ marginTop: 14 }} disabled={approving} onClick={doApprove}>{approving ? "Releasing…" : "Approve & animate →"}</button>
+        </div>
+      )}
+
       {data.failure && (
         <div style={S.failBox}>
           <div style={S.failHead}>Couldn’t finish — {data.failure.label || cap(data.failure.stage)}.</div>
@@ -97,9 +143,9 @@ function Detail({ data }) {
         </div>
       )}
 
-      {assets.length > 0 ? (
+      {!review && (shown.length > 0 ? (
         <div style={S.assets}>
-          {assets.map((a) => {
+          {shown.map((a) => {
             const src = toLocal(a.storage_url);
             const base = String(p.title || "shoot").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
             const name = `${base}-${a.kind}-${a.id}.${isVideo(a.kind) ? "mp4" : "jpg"}`;
@@ -120,7 +166,7 @@ function Detail({ data }) {
         <p className="hint" style={{ marginTop: 18 }}>
           {done ? "No downloadable output was produced." : failed ? "This shoot didn’t finish — see the reason above." : "Rendering… the video appears here the moment it finishes."}
         </p>
-      )}
+      ))}
     </div>
   );
 }
@@ -146,4 +192,15 @@ const S = {
   failBox: { border: "1px solid #e6c0c0", background: "#fdf3f3", borderRadius: 10, padding: "12px 14px", marginBottom: 18 },
   failHead: { fontSize: 14, fontWeight: 600, color: "#b04a4a" },
   failMsg: { fontSize: 13, color: "#8a6a6a", marginTop: 3 },
+  reviewBox: { border: "1px solid #cfc6f5", background: "#f5f3ff", borderRadius: 10, padding: "14px 16px", marginBottom: 18 },
+  reviewHead: { fontSize: 15, fontWeight: 600, color: "#5b3df5" },
+  reviewMsg: { fontSize: 13, color: "#6a6580", marginTop: 4 },
+  sceneGroups: { display: "flex", flexDirection: "column", gap: 12, marginTop: 12 },
+  sceneGroup: {},
+  sceneLbl: { fontSize: 12, fontWeight: 600, color: "#5a554c", marginBottom: 6 },
+  cands: { display: "flex", gap: 8, flexWrap: "wrap" },
+  cand: { position: "relative", padding: 0, border: "2px solid transparent", borderRadius: 8, background: "none", cursor: "pointer", width: 84, height: 112, overflow: "hidden" },
+  candOn: { borderColor: "#5b3df5", boxShadow: "0 0 0 2px rgba(91,61,245,.15)" },
+  candImg: { width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: 6 },
+  candTick: { position: "absolute", top: 4, right: 4, background: "#5b3df5", color: "#fff", borderRadius: 999, width: 18, height: 18, fontSize: 12, lineHeight: "18px", textAlign: "center" },
 };

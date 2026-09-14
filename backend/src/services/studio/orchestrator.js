@@ -106,18 +106,45 @@ const Orchestrator = {
    */
   async createShoot({
     tenantId, avatarId, userId = null, kind = 'post', frameCount = 4,
-    brief = {}, shots = [], scene = {}, tier = 'free',
+    brief = {}, shots = [], scene = {}, scenes = null, tier = 'free',
     clipSeconds = SECONDS_PER_CLIP, idempotencyKey = null, intent = 'cloud',
-    resolution = '480p',
+    resolution = '480p', reviewStills = null,
   }) {
     if (!tenantId) throw Object.assign(new Error('tenantId is required'), { status: 400 });
     if (!avatarId) throw Object.assign(new Error('avatarId is required'), { status: 400 });
-    if (frameCount < 1 || frameCount > 10) {
-      throw Object.assign(new Error('frameCount must be between 1 and 10'), { status: 400 });
-    }
-
     // A shoot bound to a publishing slot cannot claim to be local-only R&D.
     RunnerPolicy.assertIntentAllowed(intent, { willPublish: Boolean(brief.slot_type) });
+
+    // Normalize to a list of SCENES, each with its own shots. A multi-location
+    // reel passes scenes[]; the flat scene+shots form (templates, tests) is
+    // wrapped as one scene. Total shots drive the DAG and the cost, so cap them.
+    const MAX_SHOTS = 10;
+    let sceneList;
+    if (Array.isArray(scenes) && scenes.length) {
+      sceneList = scenes.map((sc) => ({ ...sc, shots: Array.isArray(sc.shots) ? sc.shots : [] }));
+    } else {
+      // Flat / back-compat path (templates, direct create). Honor frameCount so a
+      // call with a frame count but no explicit shots still gets that many.
+      const flat = Array.isArray(shots) ? shots.slice() : [];
+      const want = Math.max(1, Number(frameCount) || 1);
+      while (flat.length < want) flat.push({});
+      sceneList = [{ location_key: scene.location_key, time_of_day: scene.time_of_day, continuity: scene.continuity, shots: flat }];
+    }
+    if (!sceneList.reduce((n, sc) => n + sc.shots.length, 0)) {
+      sceneList = [{ ...(sceneList[0] || {}), shots: [{}] }];   // always at least one shot
+    }
+    {
+      let budget = MAX_SHOTS; const trimmed = [];
+      for (const sc of sceneList) {
+        if (budget <= 0) break;
+        const take = sc.shots.slice(0, budget);
+        if (!take.length) continue;
+        trimmed.push({ ...sc, shots: take });
+        budget -= take.length;
+      }
+      sceneList = trimmed;
+    }
+    const frameTotal = sceneList.reduce((n, sc) => n + sc.shots.length, 0);
 
     const quality    = QUALITY_BY_PLAN[tier] || '1mp';
     const candidates = CANDIDATES[tier] || 1;
@@ -174,7 +201,7 @@ const Orchestrator = {
         (avatar.voice_provider || 'elevenlabs') === 'elevenlabs' &&
         process.env.ELEVENLABS_API_KEY
       );
-      const { stages, stepTotal } = planFor({ kind, frameCount, clipSeconds, intent, resolution, wantsVoice });
+      const { stages, stepTotal } = planFor({ kind, frameCount: frameTotal, clipSeconds, intent, resolution, wantsVoice });
 
       // ── Vocabulary clamp ─────────────────────────────────────────────────
       // Every shoot passes through here, so this is where a shot/scene value is
@@ -205,37 +232,45 @@ const Orchestrator = {
          JSON.stringify(brief), brief.trend_source || 'manual', userId]
       );
 
-      const { rows: [sceneRow] } = await client.query(
-        `INSERT INTO studio_scenes (project_id, seq, location_key, time_of_day, continuity)
-         VALUES ($1,1,$2,$3,$4::jsonb) RETURNING *`,
-        [project.id, scene.location_key || null, clampVocab('time_of_day', scene.time_of_day, 'afternoon'),
-         JSON.stringify(scene.continuity || {})]
-      );
-
+      // One studio_scene per scene (its own location / wardrobe / time), with its
+      // shots flattened under them in order. Shot `seq` is GLOBAL across the reel
+      // so the stitch order is stable and filenames never collide between scenes.
       const shotRows = [];
-      for (let i = 0; i < frameCount; i += 1) {
-        const s = shots[i] || {};
-        const { rows: [shot] } = await client.query(
-          `INSERT INTO studio_shots
-             (scene_id, seq, framing, light_direction, light_quality,
-              expression_key, expression_intensity, wardrobe_key, pose_key,
-              duration_seconds, advanced_append)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-          [sceneRow.id, i + 1,
-           clampVocab('framing', s.framing, 'medium'), clampVocab('light_direction', s.light_direction, 'camera_left'), clampVocab('light_quality', s.light_quality, 'soft'),
-           clampVocab('expression', s.expression_key, 'neutral'), s.expression_intensity || 'medium',
-           s.wardrobe_key || null, s.pose_key || null,
-           kind === 'post' || kind === 'carousel' ? null : clipSeconds,
-           s.advanced_append || null]
+      let firstSceneId = null;
+      let sceneSeq = 0;
+      for (const sc of sceneList) {
+        sceneSeq += 1;
+        const { rows: [sceneRow] } = await client.query(
+          `INSERT INTO studio_scenes (project_id, seq, location_key, time_of_day, continuity)
+           VALUES ($1,$2,$3,$4,$5::jsonb) RETURNING *`,
+          [project.id, sceneSeq, sc.location_key || null, clampVocab('time_of_day', sc.time_of_day, 'afternoon'),
+           JSON.stringify(sc.continuity || {})]
         );
-        // v1 writes exactly one character per shot. Two rows here means a
-        // two-shot: expensive, fragile, and QC'd per face.
-        await client.query(
-          `INSERT INTO studio_shot_characters (shot_id, avatar_id, lora_id, role)
-           VALUES ($1,$2,$3,'subject')`,
-          [shot.id, avatarId, avatar.lora_id]
-        );
-        shotRows.push(shot);
+        if (!firstSceneId) firstSceneId = sceneRow.id;
+        for (const rawShot of sc.shots) {
+          const s = rawShot || {};
+          const { rows: [shot] } = await client.query(
+            `INSERT INTO studio_shots
+               (scene_id, seq, framing, light_direction, light_quality,
+                expression_key, expression_intensity, wardrobe_key, pose_key,
+                duration_seconds, advanced_append)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+            [sceneRow.id, shotRows.length + 1,
+             clampVocab('framing', s.framing, 'medium'), clampVocab('light_direction', s.light_direction, 'camera_left'), clampVocab('light_quality', s.light_quality, 'soft'),
+             clampVocab('expression', s.expression_key, 'neutral'), s.expression_intensity || 'medium',
+             s.wardrobe_key || null, s.pose_key || null,
+             kind === 'post' || kind === 'carousel' ? null : clipSeconds,
+             s.advanced_append || null]
+          );
+          // v1 writes exactly one character per shot. Two rows here means a
+          // two-shot: expensive, fragile, and QC'd per face.
+          await client.query(
+            `INSERT INTO studio_shot_characters (shot_id, avatar_id, lora_id, role)
+             VALUES ($1,$2,$3,'subject')`,
+            [shot.id, avatarId, avatar.lora_id]
+          );
+          shotRows.push(shot);
+        }
       }
 
       // ── Quota, before any job exists ───────────────────────────────────────
@@ -268,6 +303,17 @@ const Orchestrator = {
         return Math.round((purchasedCredits * (Number(amount) / totalCredits)) * 100) / 100;
       };
 
+      // ── Gate 2: hold the expensive stages for review ──────────────────────
+      // For a motion shoot with the stills-review gate on, everything downstream
+      // of QC (motion, voice, assemble, copy) is created HELD, not queued — so
+      // the stills render and the pipeline STOPS. The user reviews the frames and
+      // approves; POST /shoots/:id/approve flips the held jobs to queued and the
+      // video renders. Nothing expensive runs (and motion never settles a charge)
+      // until a human has seen the stills.
+      const isMotionKind = kind === 'reel' || kind === 'short' || kind === 'longform';
+      const gate = reviewStills === null ? isMotionKind : Boolean(reviewStills);
+      const HELD_STAGES = new Set(['motion', 'voice', 'assemble', 'copy']);
+
       // ── The job graph ──────────────────────────────────────────────────────
       const byKey = new Map();
       for (const spec of stages) {
@@ -285,10 +331,11 @@ const Orchestrator = {
           step_index: spec.step,
           step_total: stepTotal,
           label: spec.label,
+          status: (gate && HELD_STAGES.has(spec.stage)) ? 'held' : 'queued',
           payload: {
             avatar_id: avatarId,
             lora_id: avatar.lora_id,
-            scene_id: sceneRow.id,
+            scene_id: shot ? shot.scene_id : firstSceneId,
             subject_type: avatar.subject_type,
             quality,
             candidates,
@@ -306,7 +353,8 @@ const Orchestrator = {
 
       return {
         project,
-        scene: sceneRow,
+        scene_id: firstSceneId,
+        scene_count: sceneSeq,
         shots: shotRows,
         job_count: byKey.size,
         step_total: stepTotal,
@@ -333,6 +381,7 @@ const Orchestrator = {
               COUNT(*) FILTER (WHERE status = 'done')::int         AS done,
               COUNT(*) FILTER (WHERE status = 'failed')::int       AS failed,
               COUNT(*) FILTER (WHERE status = 'blocked')::int      AS blocked,
+              COUNT(*) FILTER (WHERE status = 'held')::int          AS held,
               COUNT(*) FILTER (WHERE status IN ('claimed','running'))::int AS running,
               MIN(step_index)                                      AS ord
          FROM render_jobs
@@ -349,10 +398,12 @@ const Orchestrator = {
       done: r.done,
       failed: r.failed,
       blocked: r.blocked,
+      held: r.held,
       running: r.running,
       status: r.failed ? 'failed'
         : r.blocked ? 'blocked'
         : r.done === r.total ? 'done'
+        : r.held ? 'held'
         : r.running ? 'running'
         : 'waiting',
     }));
@@ -360,13 +411,21 @@ const Orchestrator = {
     const totals = steps.reduce((acc, s) => ({
       done: acc.done + s.done, total: acc.total + s.total,
       failed: acc.failed + s.failed, blocked: acc.blocked + s.blocked,
-    }), { done: 0, total: 0, failed: 0, blocked: 0 });
+      held: acc.held + s.held,
+    }), { done: 0, total: 0, failed: 0, blocked: 0, held: 0 });
+
+    // At the review gate: every non-held job is done and held jobs remain, so the
+    // shoot is waiting on the user, not on a worker.
+    const atGate = totals.held > 0 && (totals.done + totals.held) === totals.total;
 
     return {
       steps,
       ...totals,
       percent: totals.total ? Math.round((totals.done / totals.total) * 100) : 0,
-      status: totals.failed ? 'failed' : totals.done === totals.total && totals.total ? 'done' : 'running',
+      status: totals.failed ? 'failed'
+        : (totals.done === totals.total && totals.total) ? 'done'
+        : atGate ? 'review'
+        : 'running',
     };
   },
 };
