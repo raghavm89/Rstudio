@@ -108,7 +108,7 @@ const Orchestrator = {
     tenantId, avatarId, userId = null, kind = 'post', frameCount = 4,
     brief = {}, shots = [], scene = {}, scenes = null, tier = 'free',
     clipSeconds = SECONDS_PER_CLIP, idempotencyKey = null, intent = 'cloud',
-    resolution = '480p', reviewStills = null,
+    resolution = '480p', reviewStills = null, candidatesPerShot = null,
   }) {
     if (!tenantId) throw Object.assign(new Error('tenantId is required'), { status: 400 });
     if (!avatarId) throw Object.assign(new Error('avatarId is required'), { status: 400 });
@@ -147,7 +147,14 @@ const Orchestrator = {
     const frameTotal = sceneList.reduce((n, sc) => n + sc.shots.length, 0);
 
     const quality    = QUALITY_BY_PLAN[tier] || '1mp';
-    const candidates = CANDIDATES[tier] || 1;
+    // Candidates per shot: the pool of still frames rendered for each beat, from
+    // which QC (and the human, at Gate 2) pick the best. Defaults by tier; a
+    // create-page control may raise or lower it, clamped so cost stays sane.
+    const CANDIDATE_MAX = 6;
+    const baseCandidates = CANDIDATES[tier] || 1;
+    const candidates = (candidatesPerShot != null && Number.isFinite(Number(candidatesPerShot)))
+      ? Math.max(1, Math.min(CANDIDATE_MAX, Math.round(Number(candidatesPerShot))))
+      : baseCandidates;
 
     const client = await pool.connect();
     try {
@@ -360,6 +367,242 @@ const Orchestrator = {
         step_total: stepTotal,
         reserved: { credits: totalCredits },
       };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Re-animate a finished shoot's selected stills into a NEW video take. Motion
+   * is stochastic, so each run differs — the stills are reused (no re-render, no
+   * re-review). Enqueues a fresh motion -> assemble -> copy set with new seeds
+   * and reserves only the motion credits. Earlier takes are kept (assemble no
+   * longer deletes prior reels), so a shoot accumulates versions.
+   */
+  async reanimate({ tenantId, projectId, userId = null }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: pr } = await client.query(
+        `SELECT p.id, p.kind, p.avatar_id, a.subject_type, l.id AS lora_id
+           FROM studio_projects p
+           JOIN avatars a ON a.id = p.avatar_id
+           LEFT JOIN avatar_loras l ON l.avatar_id = a.id AND l.active
+          WHERE p.id = $1 AND p.tenant_id = $2`,
+        [projectId, tenantId]
+      );
+      const proj = pr[0];
+      if (!proj) throw Object.assign(new Error('Shoot not found'), { status: 404 });
+      if (!['reel', 'short', 'longform'].includes(proj.kind)) {
+        throw Object.assign(new Error('Only video shoots can be re-animated'), { status: 400 });
+      }
+      if (!proj.lora_id) throw Object.assign(new Error('This avatar has no trained model'), { status: 409 });
+
+      const { rows: busy } = await client.query(
+        `SELECT 1 FROM render_jobs WHERE project_id = $1 AND status IN ('queued','claimed','running','held') LIMIT 1`,
+        [projectId]
+      );
+      if (busy[0]) throw Object.assign(new Error('This shoot is still working — wait for the current take to finish.'), { status: 409 });
+
+      const { rows: shots } = await client.query(
+        `SELECT sh.id AS shot_id, sh.seq, sh.framing, sh.duration_seconds,
+                sc.continuity AS scene_continuity,
+                (SELECT storage_url FROM studio_assets sa
+                  WHERE sa.shot_id = sh.id AND sa.kind = 'still' AND sa.selected AND sa.project_id = $1
+                  ORDER BY sa.id DESC LIMIT 1) AS still_url
+           FROM studio_shots sh
+           JOIN studio_scenes sc ON sc.id = sh.scene_id
+          WHERE sc.project_id = $1
+          ORDER BY sh.seq`,
+        [projectId]
+      );
+      const usable = shots.filter((s) => s.still_url);
+      if (!usable.length) throw Object.assign(new Error('No selected stills to animate'), { status: 409 });
+
+      const clipSeconds = Number(usable[0].duration_seconds) || SECONDS_PER_CLIP;
+      const { rows: rjm } = await client.query(
+        `SELECT payload FROM render_jobs WHERE project_id = $1 AND stage = 'motion' ORDER BY id DESC LIMIT 1`,
+        [projectId]
+      );
+      const resolution = (rjm[0] && rjm[0].payload && rjm[0].payload.resolution) || '480p';
+
+      const perMotion = creditCostFor({ stage: 'motion', seconds: clipSeconds, resolution });
+      const totalCredits = perMotion * usable.length;
+      if (totalCredits) await StudioUsage.reserve(client, tenantId, 'credits', totalCredits);
+
+      const { rows: mx } = await client.query('SELECT COALESCE(MAX(step_index), -1) AS m FROM render_jobs WHERE project_id = $1', [projectId]);
+      let step = Number(mx[0].m) + 1;
+
+      const { deriveMotionPrompt } = require('./motionPrompt');
+      const runner = (stage) => RunnerPolicy.runnerFor(stage, { intent: 'cloud' });
+      const motionIds = [];
+      for (const sh of usable) {
+        const job = await RenderJob.enqueueTx(client, {
+          tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
+          stage: 'motion', runner: runner('motion'), priority: 100,
+          step_index: step, step_total: 0, label: `Bringing photo ${sh.seq} to life (new take)`,
+          payload: {
+            avatar_id: proj.avatar_id, lora_id: proj.lora_id, resolution, clip_seconds: clipSeconds,
+            subject_type: proj.subject_type,
+            generation: {
+              image_url: sh.still_url,
+              motion_prompt: deriveMotionPrompt({ framing: sh.framing, scene_continuity: sh.scene_continuity }),
+              resolution, seed: Math.floor(Math.random() * 2000000000), publicly_fetchable: true,
+            },
+            _reserved: perMotion, _from_credits: 0,
+          },
+        });
+        motionIds.push(job.id);
+      }
+      step += 1;
+      const assemble = await RenderJob.enqueueTx(client, {
+        tenant_id: tenantId, project_id: projectId, stage: 'assemble', runner: runner('assemble'),
+        depends_on: motionIds, step_index: step, step_total: 0, label: 'Putting it together (new take)',
+        payload: { avatar_id: proj.avatar_id, lora_id: proj.lora_id, clip_seconds: clipSeconds },
+      });
+      step += 1;
+      const copyJob = await RenderJob.enqueueTx(client, {
+        tenant_id: tenantId, project_id: projectId, stage: 'copy', runner: runner('copy'),
+        depends_on: [assemble.id], step_index: step, step_total: 0, label: 'Writing the caption (new take)',
+        payload: { avatar_id: proj.avatar_id },
+      });
+      step += 1;
+
+      await client.query('UPDATE render_jobs SET step_total = $2 WHERE id = ANY($1::int[])', [[...motionIds, assemble.id, copyJob.id], step]);
+      await client.query("UPDATE studio_projects SET status = 'generating' WHERE id = $1 AND tenant_id = $2", [projectId, tenantId]);
+      await client.query('COMMIT');
+      return { project_id: projectId, motions: motionIds.length, reserved: { credits: totalCredits } };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Regenerate the stills for a shoot that is waiting at the Gate 2 review.
+   *
+   * The reject path: the user doesn't like the frames and wants a fresh set to
+   * pick from, without touching the plan. We supersede the current still
+   * candidates (they drop out of the picker and out of QC's selection) and run a
+   * fresh prompt -> still -> qc pass for every shot with NEW seeds. The motion
+   * jobs stay HELD exactly as they were; when the new QC picks a winner it
+   * re-points each held motion at the new frame, so approving later animates the
+   * regenerated stills. Only the still stage is charged; motion has not run.
+   */
+  async regenerateStills({ tenantId, projectId, userId = null }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: pr } = await client.query(
+        `SELECT p.id, p.kind, p.avatar_id, a.subject_type, l.id AS lora_id
+           FROM studio_projects p
+           JOIN avatars a ON a.id = p.avatar_id
+           LEFT JOIN avatar_loras l ON l.avatar_id = a.id AND l.active
+          WHERE p.id = $1 AND p.tenant_id = $2`,
+        [projectId, tenantId]
+      );
+      const proj = pr[0];
+      if (!proj) throw Object.assign(new Error('Shoot not found'), { status: 404 });
+
+      // Only meaningful at the review gate: there must be HELD downstream jobs
+      // (motion/assemble/copy) waiting on the frames.
+      const { rows: held } = await client.query(
+        `SELECT 1 FROM render_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = 'held' LIMIT 1`,
+        [projectId, tenantId]
+      );
+      if (!held[0]) {
+        throw Object.assign(new Error('These stills are not waiting for review — nothing to regenerate.'), { status: 409 });
+      }
+      // Not already regenerating.
+      const { rows: busy } = await client.query(
+        `SELECT 1 FROM render_jobs WHERE project_id = $1 AND status IN ('queued','claimed','running') LIMIT 1`,
+        [projectId]
+      );
+      if (busy[0]) throw Object.assign(new Error('New frames are already on the way — give it a moment.'), { status: 409 });
+
+      // The shots to re-shoot, in order.
+      const { rows: shots } = await client.query(
+        `SELECT sh.id AS shot_id, sh.seq, sh.scene_id
+           FROM studio_shots sh
+           JOIN studio_scenes sc ON sc.id = sh.scene_id
+          WHERE sc.project_id = $1
+          ORDER BY sh.seq`,
+        [projectId]
+      );
+      if (!shots.length) throw Object.assign(new Error('This shoot has no shots'), { status: 409 });
+
+      // Reuse the pool size / quality / resolution the shoot was built with.
+      const { rows: pj } = await client.query(
+        `SELECT payload FROM render_jobs WHERE project_id = $1 AND stage = 'prompt' ORDER BY id DESC LIMIT 1`,
+        [projectId]
+      );
+      const prevPayload = (pj[0] && pj[0].payload) || {};
+      const candidates = Math.max(1, Number(prevPayload.candidates) || 1);
+      const quality = prevPayload.quality || '1mp';
+      const resolution = prevPayload.resolution || '480p';
+
+      // Money: one still charge per shot (the still job renders `candidates`
+      // frames for that flat cost). Reserved up front so the pass cannot get
+      // half-queued and then refused.
+      const perStill = creditCostFor({ stage: 'still' });
+      const totalCredits = perStill * shots.length;
+      if (totalCredits) await StudioUsage.reserve(client, tenantId, 'credits', totalCredits);
+
+      // Retire the current candidates: out of the picker, out of QC, deselected.
+      await client.query(
+        `UPDATE studio_assets SET qc_status = 'superseded', selected = false
+          WHERE project_id = $1 AND kind = 'still'`,
+        [projectId]
+      );
+
+      const { rows: mx } = await client.query('SELECT COALESCE(MAX(step_index), -1) AS m FROM render_jobs WHERE project_id = $1', [projectId]);
+      let step = Number(mx[0].m) + 1;
+      const runner = (stage) => RunnerPolicy.runnerFor(stage, { intent: 'cloud' });
+
+      // Fresh prompt job — re-assembles each shot's prompt (new seeds) and writes
+      // it onto the new still jobs that depend on it.
+      const promptJob = await RenderJob.enqueueTx(client, {
+        tenant_id: tenantId, project_id: projectId, stage: 'prompt', runner: runner('prompt'),
+        priority: 100, step_index: step, step_total: 0, label: 'Re-working the shots',
+        payload: { avatar_id: proj.avatar_id, lora_id: proj.lora_id, quality, candidates, resolution },
+      });
+      step += 1;
+
+      const newIds = [promptJob.id];
+      for (const sh of shots) {
+        const stillJob = await RenderJob.enqueueTx(client, {
+          tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
+          stage: 'still', runner: runner('still'), priority: 100,
+          depends_on: [promptJob.id], step_index: step, step_total: 0,
+          label: `Photo ${sh.seq} (new)`,
+          payload: {
+            avatar_id: proj.avatar_id, lora_id: proj.lora_id, scene_id: sh.scene_id,
+            subject_type: proj.subject_type, quality, candidates, resolution,
+            _reserved: perStill, _from_credits: 0,
+          },
+        });
+        const qcJob = await RenderJob.enqueueTx(client, {
+          tenant_id: tenantId, project_id: projectId, shot_id: sh.shot_id,
+          stage: 'qc', runner: runner('qc'), priority: 100,
+          depends_on: [stillJob.id], step_index: step, step_total: 0,
+          label: `Checking photo ${sh.seq} (new)`,
+          payload: { avatar_id: proj.avatar_id },
+        });
+        newIds.push(stillJob.id, qcJob.id);
+      }
+      step += 1;
+
+      await client.query('UPDATE render_jobs SET step_total = $2 WHERE id = ANY($1::int[])', [newIds, step]);
+      await client.query("UPDATE studio_projects SET status = 'generating' WHERE id = $1 AND tenant_id = $2", [projectId, tenantId]);
+      await client.query('COMMIT');
+      return { project_id: projectId, shots: shots.length, candidates, reserved: { credits: totalCredits } };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

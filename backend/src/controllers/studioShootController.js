@@ -142,7 +142,7 @@ exports.create = async (req, res) => {
 // GET /api/studio/shoots/:id — what the progress view polls
 exports.progress = async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, tenant_id, title, kind, status FROM studio_projects WHERE id = $1',
+    'SELECT id, tenant_id, title, kind, status, avatar_id FROM studio_projects WHERE id = $1',
     [req.params.id]
   );
   const project = rows[0];
@@ -160,6 +160,7 @@ exports.progress = async (req, res) => {
             width, height, seconds, selected, created_at
        FROM studio_assets
       WHERE tenant_id = $1 AND project_id = $2 AND storage_url IS NOT NULL
+        AND qc_status IS DISTINCT FROM 'superseded'
       ORDER BY (kind IN ('reel','longform','clip','short')) DESC, selected DESC, created_at DESC`,
     [req.user.tenant_id, req.params.id]
   );
@@ -254,7 +255,7 @@ exports.plan = async (req, res) => {
 exports.generate = async (req, res) => {
   const tenantId = req.user.tenant_id;
   if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
-  const { avatar_id, kind = 'reel', clip_seconds = 5, brief = {}, scenes, idempotency_key = null, intent = 'cloud', plan_id = null } = req.body || {};
+  const { avatar_id, kind = 'reel', clip_seconds = 5, brief = {}, scenes, idempotency_key = null, intent = 'cloud', plan_id = null, candidates = null } = req.body || {};
   if (!Number.isInteger(Number(avatar_id))) return res.status(400).json({ error: 'avatar_id is required' });
   if (!KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${KINDS.join(', ')}` });
   if (!Array.isArray(scenes) || !scenes.length) return res.status(400).json({ error: 'scenes[] is required — plan the shoot first' });
@@ -277,6 +278,7 @@ exports.generate = async (req, res) => {
       clipSeconds,
       idempotencyKey: idempotency_key,
       intent,
+      candidatesPerShot: (candidates != null && candidates !== '') ? Number(candidates) : null,
     });
     // Attach the approved (possibly edited) plan + the shoot to the feedback row.
     try {
@@ -371,6 +373,48 @@ exports.approve = async (req, res) => {
   // Strongest "good plan" signal for the learner: a human approved these frames.
   try { await PlanFeedback.markStillsApproved(projectId, tenantId); } catch (e) { console.error('[plan feedback]', e.message); }
   return res.json({ ok: true, released: rowCount });
+};
+
+/**
+ * Re-animate: make another video take from this shoot's selected stills. New
+ * motion seeds, so the take differs; reuses the frames (no re-render, no
+ * re-review); reserves only motion credits. The shoot keeps its earlier takes.
+ */
+exports.reanimate = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+  try {
+    const result = await Orchestrator.reanimate({ tenantId, projectId, userId: req.user.id });
+    return res.status(201).json(result);
+  } catch (err) {
+    if (err.code === StudioUsage.QUOTA_EXCEEDED) {
+      return res.status(402).json({ error: err.message, code: err.code, metric: err.metric, remaining: err.remaining, limit: err.limit });
+    }
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    throw err;
+  }
+};
+
+/**
+ * Reject the stills at Gate 2 and render a fresh set to pick from. Supersedes the
+ * current candidates and re-runs prompt/still/qc with new seeds; the motion jobs
+ * stay held, so nothing expensive runs until the user approves the new frames.
+ */
+exports.regenerateStills = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+  try {
+    const result = await Orchestrator.regenerateStills({ tenantId, projectId, userId: req.user.id });
+    return res.status(201).json(result);
+  } catch (err) {
+    if (err.code === StudioUsage.QUOTA_EXCEEDED) {
+      return res.status(402).json({ error: err.message, code: err.code, metric: err.metric, remaining: err.remaining, limit: err.limit });
+    }
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    throw err;
+  }
 };
 
 exports.transcribe = async (req, res) => {

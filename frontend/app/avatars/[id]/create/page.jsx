@@ -51,6 +51,7 @@ function Idea({ avatarId }) {
   const [kind, setKind] = useState("reel");
   const [clip, setClip] = useState(5);
   const [beats, setBeats] = useState(3);   // reel = a storyboard of N beats, stitched
+  const [stills, setStills] = useState(4);  // candidate frames rendered per scene to pick from
   const [plan, setPlan] = useState(null);   // the reviewable storyboard, before generating
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -116,7 +117,7 @@ function Idea({ avatarId }) {
     setBusy(true);
     try {
       const p = await post("/shoots/plan", { avatar_id: Number(avatarId), idea: idea.trim(), kind, clip_seconds: clip, ...(motion ? { frame_count: beats } : {}) });
-      setPlan({ ...p, clipSeconds: p.clipSeconds || clip });
+      setPlan({ ...p, clipSeconds: p.clipSeconds || clip, candidates: stills });
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
   }
 
@@ -162,7 +163,12 @@ function Idea({ avatarId }) {
               <input type="range" min={2} max={10} value={clip} onChange={(e) => setClip(Number(e.target.value))} />
               <span style={S.clipVal}>{clip}s</span>
             </label>
-            <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} scenes` : ""}</span>
+            <label style={S.clip}>
+              <span style={S.ctlLbl}>Stills</span>
+              <input type="range" min={1} max={6} value={stills} onChange={(e) => setStills(Number(e.target.value))} />
+              <span style={S.clipVal}>{stills}</span>
+            </label>
+            <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} scenes` : ""} · {stills} still{stills === 1 ? "" : "s"}/scene</span>
           </div>
         )}
       </div>
@@ -256,7 +262,7 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
   async function generate() {
     setErr(null); setBusy(true);
     try {
-      await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: plan.brief || {}, scenes, plan_id: plan.plan_id });
+      await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: plan.brief || {}, scenes, plan_id: plan.plan_id, candidates: plan.candidates });
       router.push("/shoots");
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
   }

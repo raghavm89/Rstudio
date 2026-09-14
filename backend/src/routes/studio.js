@@ -134,6 +134,8 @@ router.post('/transcribe',             authorize(...TENANT_ROLES), asyncHandler(
 router.get ('/shoots/:id',             authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.progress));
 router.post('/shoots/:id/approve',      authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.approve));
 router.post('/shoots/:id/select-still', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.selectStill));
+router.post('/shoots/:id/reanimate',    authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.reanimate));
+router.post('/shoots/:id/regenerate-stills', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.regenerateStills));
 
 // The persona list, and making one.
 //

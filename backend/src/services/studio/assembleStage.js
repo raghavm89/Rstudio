@@ -68,18 +68,22 @@ const AssembleStage = {
     const client = await pool.connect();
     let clips, voice;
     try {
+      // Pull clips from THIS assemble's own dependencies, not every motion job in
+      // the project — otherwise a re-animate ("new take") would stitch the old
+      // take's clips together with the new ones.
+      const deps = Array.isArray(job.depends_on) ? job.depends_on : [];
       const { rows: motion } = await client.query(
         `SELECT result FROM render_jobs
-          WHERE project_id = $1 AND stage = 'motion' AND status = 'done'
+          WHERE id = ANY($1::int[]) AND stage = 'motion' AND status = 'done'
           ORDER BY id`,
-        [job.project_id]
+        [deps]
       );
       clips = motion.map((m) => firstAssetKey(m.result));
       const { rows: voiceRows } = await client.query(
         `SELECT result FROM render_jobs
-          WHERE project_id = $1 AND stage = 'voice' AND status = 'done'
+          WHERE id = ANY($1::int[]) AND stage = 'voice' AND status = 'done'
           ORDER BY id LIMIT 1`,
-        [job.project_id]
+        [deps]
       );
       voice = voiceRows[0] ? firstAssetKey(voiceRows[0].result) : null;
     } finally {
@@ -96,7 +100,6 @@ const AssembleStage = {
       const clipKey = plan.clips[0];
       const reelUrl = /^https?:\/\//i.test(clipKey) ? clipKey : storage.readUrl(clipKey);
       const pl = job.payload || {};
-      await pool.query(`DELETE FROM studio_assets WHERE project_id = $1 AND kind = 'reel'`, [job.project_id]);
       await pool.query(
         `INSERT INTO studio_assets
            (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
@@ -124,7 +127,6 @@ const AssembleStage = {
     // studio_assets) shows the stills but not the finished reel.
     const reelUrl = asset.url || (asset.key ? storage.readUrl(asset.key) : null);
     const pl = job.payload || {};
-    await pool.query(`DELETE FROM studio_assets WHERE project_id = $1 AND kind = 'reel'`, [job.project_id]);
     await pool.query(
       `INSERT INTO studio_assets
          (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)

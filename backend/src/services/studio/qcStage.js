@@ -92,6 +92,7 @@ async function runQc(job, deps = {}) {
     const { rows: candidates } = await client.query(
       `SELECT id, storage_url, candidate_index FROM studio_assets
         WHERE project_id = $1 AND shot_id = $2 AND kind = 'still'
+          AND qc_status IS DISTINCT FROM 'superseded'
         ORDER BY candidate_index`,
       [projectId, shotId]
     );

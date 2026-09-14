@@ -79,6 +79,13 @@ function Detail({ data, onApprove, onRefresh }) {
   const statusText = failed ? "Failed" : done ? "Done" : review ? "Ready to review" : "Generating";
   const statusColor = failed ? "#b04a4a" : done ? "#2f7d4f" : review ? "#5b3df5" : "#8a7d3a";
   async function doApprove() { setApproving(true); try { await onApprove(); } catch (_) {} finally { setApproving(false); } }
+  const [regenning, setRegenning] = useState(false);
+  const [regenErr, setRegenErr] = useState(null);
+  async function regen() {
+    setRegenErr(null); setRegenning(true);
+    try { await post(`/shoots/${p.id}/regenerate-stills`); if (onRefresh) await onRefresh(); }
+    catch (e) { setRegenErr(String((e && e.message) || e)); } finally { setRegenning(false); }
+  }
   const stills = assets.filter((a) => a.kind === "still");
   const videos = assets.filter((a) => isVideo(a.kind));
   const shotIds = [...new Set(stills.map((a) => a.shot_id))].sort((x, y) => (x || 0) - (y || 0));
@@ -88,6 +95,14 @@ function Detail({ data, onApprove, onRefresh }) {
     setSelecting(assetId);
     try { await post(`/shoots/${p.id}/select-still`, { shot_id: shotId, asset_id: assetId }); if (onRefresh) await onRefresh(); }
     catch (_) {} finally { setSelecting(null); }
+  }
+  const [reanimating, setReanimating] = useState(false);
+  const [takeErr, setTakeErr] = useState(null);
+  const takeOf = new Map([...videos].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((a, i) => [a.id, i + 1]));
+  async function newTake() {
+    setTakeErr(null); setReanimating(true);
+    try { await post(`/shoots/${p.id}/reanimate`); if (onRefresh) await onRefresh(); }
+    catch (e) { setTakeErr(String((e && e.message) || e)); } finally { setReanimating(false); }
   }
 
   return (
@@ -132,7 +147,13 @@ function Detail({ data, onApprove, onRefresh }) {
               );
             })}
           </div>
-          <button className="btn" style={{ marginTop: 14 }} disabled={approving} onClick={doApprove}>{approving ? "Releasing…" : "Approve & animate →"}</button>
+          <div style={S.reviewActions}>
+            <button className="btn" disabled={approving || regenning} onClick={doApprove}>{approving ? "Releasing…" : "Approve & animate →"}</button>
+            <button className="btn ghost" disabled={approving || regenning} onClick={regen} title="Render a fresh set of stills to pick from — new frames, same plan.">{regenning ? "Reshooting…" : "↻ Regenerate stills"}</button>
+            {p.avatar_id ? <Link className="btn ghost" href={`/avatars/${p.avatar_id}/create`}>✎ Edit the plan</Link> : null}
+          </div>
+          {regenErr ? <div className="load-err" style={{ marginTop: 8 }}><span>{regenErr}</span></div> : null}
+          <p style={S.rejectHint}>Not right? <b>Regenerate</b> reshoots the frames with the same plan; <b>Edit the plan</b> starts a new one where you can change the scenes.</p>
         </div>
       )}
 
@@ -142,6 +163,14 @@ function Detail({ data, onApprove, onRefresh }) {
           <div style={S.failMsg}>{data.failure.stage === "qc" ? qcReason((assets.find((a) => a.qc_reason) || {}).qc_reason) : data.failure.message}</div>
         </div>
       )}
+
+      {done && videos.length > 0 && (
+        <div style={S.takeBar}>
+          <span style={S.takeMsg}>{videos.length} video{videos.length === 1 ? "" : "s"} in this shoot — motion varies each take.</span>
+          <button className="btn sm" disabled={reanimating} onClick={newTake}>{reanimating ? "Starting…" : "+ Generate another take"}</button>
+        </div>
+      )}
+      {takeErr ? <div className="load-err" style={{ margin: "8px 0" }}><span>{takeErr}</span></div> : null}
 
       {!review && (shown.length > 0 ? (
         <div style={S.assets}>
@@ -155,7 +184,7 @@ function Detail({ data, onApprove, onRefresh }) {
                   ? <video src={src} controls playsInline style={S.media} />
                   : <img src={src} alt={a.kind} style={S.media} />}
                 <div style={S.assetFoot}>
-                  <span style={S.assetKind}>{cap(a.kind)}{a.seconds ? ` · ${Math.round(a.seconds)}s` : ""}{!isVideo(a.kind) && a.face_similarity != null ? ` · match ${a.face_similarity}` : ""}</span>
+                  <span style={S.assetKind}>{isVideo(a.kind) ? `Take ${takeOf.get(a.id) || 1}` : cap(a.kind)}{a.seconds ? ` · ${Math.round(a.seconds)}s` : ""}{!isVideo(a.kind) && a.face_similarity != null ? ` · match ${a.face_similarity}` : ""}</span>
                   <a className="btn sm" href={src} download={name} target="_blank" rel="noreferrer">Download</a>
                 </div>
               </div>
@@ -193,14 +222,18 @@ const S = {
   failHead: { fontSize: 14, fontWeight: 600, color: "#b04a4a" },
   failMsg: { fontSize: 13, color: "#8a6a6a", marginTop: 3 },
   reviewBox: { border: "1px solid #cfc6f5", background: "#f5f3ff", borderRadius: 10, padding: "14px 16px", marginBottom: 18 },
+  reviewActions: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 14 },
+  rejectHint: { fontSize: 12, color: "#8a86a0", marginTop: 8, marginBottom: 0 },
   reviewHead: { fontSize: 15, fontWeight: 600, color: "#5b3df5" },
   reviewMsg: { fontSize: 13, color: "#6a6580", marginTop: 4 },
   sceneGroups: { display: "flex", flexDirection: "column", gap: 12, marginTop: 12 },
   sceneGroup: {},
   sceneLbl: { fontSize: 12, fontWeight: 600, color: "#5a554c", marginBottom: 6 },
   cands: { display: "flex", gap: 8, flexWrap: "wrap" },
-  cand: { position: "relative", padding: 0, border: "2px solid transparent", borderRadius: 8, background: "none", cursor: "pointer", width: 84, height: 112, overflow: "hidden" },
+  cand: { position: "relative", padding: 0, border: "2px solid transparent", borderRadius: 8, background: "none", cursor: "pointer", width: 180, height: 320, overflow: "hidden" },
   candOn: { borderColor: "#5b3df5", boxShadow: "0 0 0 2px rgba(91,61,245,.15)" },
   candImg: { width: "100%", height: "100%", objectFit: "cover", display: "block", borderRadius: 6 },
   candTick: { position: "absolute", top: 4, right: 4, background: "#5b3df5", color: "#fff", borderRadius: 999, width: 18, height: 18, fontSize: 12, lineHeight: "18px", textAlign: "center" },
+  takeBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", border: "1px solid #e6e1d8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, background: "#fff" },
+  takeMsg: { fontSize: 13, color: "#5a554c" },
 };
