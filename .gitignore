@@ -36,3 +36,6 @@ backend/studio/personas/*/_review/
 *.bak*
 .DS_Store
 *.log
+
+# Mascot LoRA training set — intermediate img2img frames, regenerable, large
+frontend/public/hero/mascot/seedset/
