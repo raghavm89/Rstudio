@@ -6,14 +6,32 @@ const pool = require('../../config/db');
  * The self-learning capture layer.
  *
  * Records the planner's proposal, the plan the user actually approved (with
- * their edits), and the outcome (did the stills pass review). This is DATA
- * CAPTURE only — it changes no behaviour. Step 2 (retrieval-augmented planning)
- * and a per-creator style memory read from here to make the planner smarter with
- * use; until then it simply accumulates the signal.
+ * their edits), and the outcome (did the stills pass review). The WRITE side
+ * captures the signal; the READ side (`retrieveExemplars`) closes the loop —
+ * the planner now feeds a creator's best past approved plans back into itself as
+ * taste examples, so it gets smarter with use. A per-creator style memory and
+ * fine-tuning are the further steps this same data asset supports.
  *
  * Every write is best-effort: a feedback failure must never break a plan or a
  * generate. Callers wrap these so a logging error is swallowed, not surfaced.
  */
+/** Trim an approved plan to the human-meaningful fields, for use as an example. */
+function compactScenes(plan) {
+  const scenes = (plan && Array.isArray(plan.scenes)) ? plan.scenes : [];
+  return scenes.slice(0, 6).map((sc) => {
+    const c = (sc && sc.continuity) || {};
+    const sh = (sc && sc.shots && sc.shots[0]) || {};
+    const out = {
+      where: String(c.location_text || '').slice(0, 160),
+      wardrobe: String(c.wardrobe_text || '').slice(0, 120),
+      action: String(sh.pose_key || '').slice(0, 160),
+      motion: String(c.motion_text || '').slice(0, 160),
+      framing: sh.framing, expression: sh.expression_key, time: sc.time_of_day,
+    };
+    return out;
+  });
+}
+
 const PlanFeedback = {
   /** At plan time: store the proposal, return its id to thread through generate. */
   async recordProposal({ tenantId, avatarId = null, userId = null, idea = '', kind = 'reel', clipSeconds = null, proposedPlan }) {
@@ -54,6 +72,34 @@ const PlanFeedback = {
         WHERE project_id = $1 AND tenant_id = $2`,
       [projectId, tenantId]
     );
+  },
+
+  /**
+   * Step 2 — the READ side of the loop. Retrieve this creator's best past
+   * APPROVED plans of this kind, as compact examples to feed the planner so it
+   * learns their taste and structure with use. Ranked by the strongest signal
+   * first: stills passed review (rendered and the human kept the frames), then
+   * the same avatar's own history, then most recent. Best-effort: any failure
+   * (no table yet, no history) returns [] and the planner runs exactly as before.
+   */
+  async retrieveExemplars({ tenantId, kind, avatarId = null, limit = 3 } = {}) {
+    if (!tenantId || !kind) return [];
+    try {
+      const n = Math.max(1, Math.min(5, Number(limit) || 3));
+      const { rows } = await pool.query(
+        `SELECT idea, approved_plan
+           FROM plan_feedback
+          WHERE tenant_id = $1 AND kind = $2 AND approved_plan IS NOT NULL
+          ORDER BY stills_approved DESC, (avatar_id = $3) DESC, updated_at DESC
+          LIMIT $4`,
+        [tenantId, kind, avatarId, n]
+      );
+      return rows
+        .map((r) => ({ idea: String(r.idea || '').slice(0, 200), scenes: compactScenes(r.approved_plan) }))
+        .filter((e) => e.scenes.length);
+    } catch (_) {
+      return [];
+    }
   },
 };
 

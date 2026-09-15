@@ -18,6 +18,7 @@
 const pool = require('../../config/db');
 const Orchestrator = require('./orchestrator');
 const { pickModel } = require('./anthropicModel');
+const PlanFeedback = require('./planFeedback');
 
 const FRAMING = ['close', 'medium', 'wide', 'full'];
 const LIGHT_DIRECTION = ['camera_left', 'camera_right', 'front', 'front_left', 'front_right', 'back_left', 'back_right', 'top'];
@@ -208,11 +209,25 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   const motion = MOTION.has(kind);
   const vocab = deps.vocab || await loadPlanVocab(avatarId);
   const system = buildSystem(kind, motion, nUnits, vocab);
-  const user = [
+  // Step 2 of the self-learning loop: this creator's best past APPROVED plans,
+  // fed in as taste examples. Both the Director and the Reviewer see them (the
+  // reviewer's message is built from `user`), so the reviewer can't refine away
+  // from the creator's established style. Empty for a new creator -> planner
+  // behaves exactly as before.
+  const exemplars = deps.exemplars || await PlanFeedback.retrieveExemplars({ tenantId, kind, avatarId, limit: 3 });
+  const userLines = [
     'Creator: ' + av.name + (av.identity_block ? ' — ' + clip(av.identity_block, 400) : ''),
     'Format: ' + kind + (motion ? (nUnits === 1 ? ' (1 scene, ' + clipSeconds + 's)' : ' (' + nUnits + ' scenes x ' + clipSeconds + 's, ~' + (nUnits * clipSeconds) + 's total)') : ''),
     'Idea: ' + clip(idea, 800),
-  ].join('\n');
+  ];
+  if (exemplars && exemplars.length) {
+    userLines.push(
+      '',
+      'Past plans THIS creator approved before - their proven taste and structure. Learn the patterns (the kinds of settings and wardrobe, how the actions are written, the framing choices); do NOT copy them, adapt to the idea above:',
+      JSON.stringify(exemplars)
+    );
+  }
+  const user = userLines.join('\n');
 
   const model = deps.model || await pickModel(llm, process.env.STUDIO_PLAN_MODEL, { prefer: 'sonnet' });
   const resp = await llm.messages.create({ model, max_tokens: 1536, system, messages: [{ role: 'user', content: user }] });
