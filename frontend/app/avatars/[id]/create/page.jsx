@@ -73,7 +73,7 @@ function Idea({ avatarId }) {
         brief: pl.brief || {}, kind: pl.kind || "reel",
         clipSeconds: pl.clipSeconds || 5, scenes: pl.scenes || [],
         candidates: (pl.candidates != null ? pl.candidates : undefined), plan_id: null,
-        from_shoot: pl.from_shoot || null,
+        from_shoot: pl.from_shoot || null, options: pl.options || null,
       }))
       .catch((e) => setErr(errorText(e)))
       .finally(() => setLoadingFrom(false));
@@ -268,6 +268,10 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
   const [err, setErr] = useState(null);
   const scenes = plan.scenes || [];
   const motion = ["reel", "short", "longform"].includes(plan.kind);
+  const opts = plan.options || {};
+  const framings = opts.framing || FRAMINGS;
+  const expressions = opts.expression || EXPRESSIONS;
+  const times = opts.time_of_day || TIMES;
 
   function patchScene(i, fn) {
     setPlan((prev) => ({
@@ -317,9 +321,9 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
             <label style={S.f}><span style={S.fl}>Action (what she is doing)</span><textarea rows={2} value={(s.shots && s.shots[0] && s.shots[0].pose_key) || ""} onChange={(e) => setShot(i, "pose_key", e.target.value)} style={S.ta2} /></label>
             {motion ? <label style={S.f}><span style={S.fl}>Motion (what moves in the video)</span><textarea rows={2} value={(s.continuity && s.continuity.motion_text) || ""} onChange={(e) => setCont(i, "motion_text", e.target.value)} style={S.ta2} /></label> : null}
             <div style={S.selRow}>
-              <label style={S.sel}><span style={S.fl}>Framing</span><select value={(s.shots && s.shots[0] && s.shots[0].framing) || "medium"} onChange={(e) => setShot(i, "framing", e.target.value)} style={S.selEl}>{FRAMINGS.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
-              <label style={S.sel}><span style={S.fl}>Expression</span><select value={(s.shots && s.shots[0] && s.shots[0].expression_key) || "soft_smile"} onChange={(e) => setShot(i, "expression_key", e.target.value)} style={S.selEl}>{EXPRESSIONS.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
-              <label style={S.sel}><span style={S.fl}>Time</span><select value={s.time_of_day || "afternoon"} onChange={(e) => setTime(i, e.target.value)} style={S.selEl}>{TIMES.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
+              <label style={S.sel}><span style={S.fl}>Framing</span><select value={(s.shots && s.shots[0] && s.shots[0].framing) || "medium"} onChange={(e) => setShot(i, "framing", e.target.value)} style={S.selEl}>{framings.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
+              <label style={S.sel}><span style={S.fl}>Expression</span><select value={(s.shots && s.shots[0] && s.shots[0].expression_key) || "soft_smile"} onChange={(e) => setShot(i, "expression_key", e.target.value)} style={S.selEl}>{expressions.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
+              <label style={S.sel}><span style={S.fl}>Time</span><select value={s.time_of_day || "afternoon"} onChange={(e) => setTime(i, e.target.value)} style={S.selEl}>{times.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
             </div>
           </div>
         ))}

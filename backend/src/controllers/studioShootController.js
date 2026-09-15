@@ -431,6 +431,11 @@ exports.shootPlan = async (req, res) => {
     if (ap && ap.brief && typeof ap.brief === 'object') brief = ap.brief;
   } catch (_) {}
 
+  // The allowed vocabulary, so the reopened editor offers the same full range
+  // the planner used (not a frozen frontend subset). Best-effort.
+  let options = null;
+  try { options = await ShootPlanner.optionsForAvatar(proj[0].avatar_id); } catch (_) {}
+
   return res.json({
     from_shoot: projectId,
     avatar_id: proj[0].avatar_id,
@@ -439,6 +444,7 @@ exports.shootPlan = async (req, res) => {
     brief,
     scenes: outScenes,
     candidates,
+    options,
   });
 };
 

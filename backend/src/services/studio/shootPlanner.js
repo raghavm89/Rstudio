@@ -56,6 +56,22 @@ function shotsForKind(kind, frameCount) {
 const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
 const clip = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
 
+// The closed-vocabulary "NEVER SENT" guarantee only covers vocabulary fragments.
+// The LLM's FREE-TEXT fields (location, wardrobe, action, motion) bypass it, so
+// scrub the known AI-tell phrases here deterministically - the reviewer is asked
+// to avoid them too, but this is the backstop that does not depend on the model.
+const AI_TELLS = /\b(flawless|poreless|blemish[- ]?free|air[- ]?brushed|porcelain skin|perfectly symmetrical|perfect symmetry|glowing skin|dewy[- ]?perfect skin|ultra[- ]?smooth skin|hyper[- ]?realistic|photo[- ]?realistic|8k)\b/gi;
+const scrub = (v) => {
+  if (!v) return v;
+  return String(v)
+    .replace(AI_TELLS, '')
+    .replace(/\s*,(\s*,)+/g, ',')     // collapse commas left behind
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+,/g, ',')
+    .replace(/^[\s,]+|[\s,]+$/g, '')
+    .trim();
+};
+
 function extractJson(text) {
   const t = String(text || '');
   const a = t.indexOf('{');
@@ -63,6 +79,50 @@ function extractJson(text) {
   if (a === -1 || b === -1 || b < a) throw new PlanError('The planner did not return a usable plan — try rephrasing the idea.', { status: 502 });
   try { return JSON.parse(t.slice(a, b + 1)); }
   catch { throw new PlanError('The planner returned malformed JSON — try again.', { status: 502 }); }
+}
+
+const INTENSITY = ['low', 'medium', 'high'];
+
+// The planner's allowed vocabulary is the SAME closed set the renderer and the
+// clamp read from prompt_vocabulary - not a frozen copy that silently drifts.
+// Loaded per the avatar's version; the module constants above are only a
+// fallback if the DB is unreachable, so planning never breaks. Cached per
+// version for the process.
+const vocabCache = {};
+async function loadPlanVocab(avatarId) {
+  try {
+    const ver = await pool.query(
+      `SELECT COALESCE(
+         (SELECT vocabulary_version FROM look_profiles  WHERE avatar_id = $1 LIMIT 1),
+         (SELECT vocabulary_version FROM style_profiles WHERE avatar_id = $1 LIMIT 1)) AS v`,
+      [avatarId]
+    );
+    const version = (ver.rows[0] && ver.rows[0].v) || 1;
+    if (vocabCache[version]) return vocabCache[version];
+    const { rows } = await pool.query(
+      `SELECT facet, option_key, fragment FROM prompt_vocabulary
+        WHERE version = $1 AND active ORDER BY sort_order, option_key`,
+      [version]
+    );
+    const by = {};
+    for (const r of rows) (by[r.facet] = by[r.facet] || []).push(r);
+    const keys = (facet, fb) => (by[facet] && by[facet].length ? by[facet].map((r) => r.option_key) : fb);
+    const firstClause = (frag) => clip(frag, 70).split(',')[0].trim();
+    const exprRows = by.expression || [];
+    const vocab = {
+      framing: keys('framing', FRAMING),
+      light_direction: keys('light_direction', LIGHT_DIRECTION),
+      light_quality: keys('light_quality', LIGHT_QUALITY),
+      expression: keys('expression', EXPRESSION),
+      time_of_day: keys('time_of_day', TIME_OF_DAY),
+      intensity: INTENSITY,
+      expression_gloss: exprRows.length ? exprRows.map((r) => `${r.option_key} (${firstClause(r.fragment)})`).join('; ') : null,
+    };
+    vocabCache[version] = vocab;
+    return vocab;
+  } catch (_) {
+    return { framing: FRAMING, light_direction: LIGHT_DIRECTION, light_quality: LIGHT_QUALITY, expression: EXPRESSION, time_of_day: TIME_OF_DAY, intensity: INTENSITY, expression_gloss: null };
+  }
 }
 
 const DIRECTOR_HEAD = [
@@ -88,15 +148,16 @@ const REVIEWER_HEAD = [
   'Output ONLY the improved JSON object - no prose, no markdown fences, no commentary.',
 ];
 
-function bodyLines(motion, n) {
-  const enums = '"framing": "' + FRAMING.join('|') + '", "light_direction": "' + LIGHT_DIRECTION.join('|') + '", "light_quality": "' + LIGHT_QUALITY.join('|') + '", "expression_key": "' + EXPRESSION.join('|') + '"';
-  const tail = 'Use ONLY the allowed enum values for framing, light_direction, light_quality and expression_key. Put anything descriptive into the text fields (location_text, wardrobe_text, action).';
+function bodyLines(motion, n, v) {
+  const enums = '"framing": "' + v.framing.join('|') + '", "light_direction": "' + v.light_direction.join('|') + '", "light_quality": "' + v.light_quality.join('|') + '", "expression_key": "' + v.expression.join('|') + '", "expression_intensity": "' + v.intensity.join('|') + '"';
+  const tail = 'Use ONLY the allowed enum values for framing, light_direction, light_quality, expression_key and expression_intensity. Put anything descriptive into the text fields (location_text, wardrobe_text, action).';
+  const exprGuide = v.expression_gloss ? ('Expression options - pick the key whose meaning fits the moment: ' + v.expression_gloss + '.') : null;
   if (motion) {
     return [
       'Shape:',
       '{',
       '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
-      '  "scenes": [ { "time_of_day": "' + TIME_OF_DAY.join('|') + '", "location_text": "where she is plus any equipment or props, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase", ' + enums + ', "action": "what she is DOING in the photo: the exact posture and how she interacts with equipment, props or the subject (for example: gripping the lat-pulldown bar overhead and pulling it toward her chest, side view, back engaged). Not merely standing and posing unless the idea is purely aesthetic", "motion": "how she MOVES in the video: the movement to animate (for example: she pulls the bar down to her chest, then lets it rise back up). For a talking scene: she speaks to the camera with natural hand gestures" } ]',
+      '  "scenes": [ { "time_of_day": "' + v.time_of_day.join('|') + '", "location_text": "where she is plus any equipment or props, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase", ' + enums + ', "action": "what she is DOING in the photo: the exact posture and how she interacts with equipment, props or the subject (for example: gripping the lat-pulldown bar overhead and pulling it toward her chest, side view, back engaged). Not merely standing and posing unless the idea is purely aesthetic", "motion": "how she MOVES in the video: the movement to animate (for example: she pulls the bar down to her chest, then lets it rise back up). For a talking scene: she speaks to the camera with natural hand gestures" } ]',
       '}',
       'First identify the content TYPE from the idea: a how-to or demonstration (SHOW the action), a talking explainer (she addresses the camera), or a lifestyle or aesthetic piece (mood and looks). Direct each scene like a real person on set: what she is DOING, her posture, and how she interacts with equipment, props or the subject.',
       'Choose framing to fit the content: for a physical demonstration use full or wide so the action is visible (a close-up cannot show an exercise); for a talking explainer use medium facing the camera; for lifestyle, vary it.',
@@ -104,27 +165,29 @@ function bodyLines(motion, n) {
         ? 'Produce exactly 1 scene that carries the idea, with a real action and a real motion.'
         : ('Produce exactly ' + n + ' scenes, each animated and stitched IN ORDER into one reel that MOVES as a mini story with a beginning, middle and end. For a how-to, make each scene a DIFFERENT step or exercise. Each scene has its OWN location_text, wardrobe_text and time_of_day (she can travel between them), plus its own action and motion. Keep the SAME person throughout; wardrobe may change between scenes if the story calls for it.')),
       'Fill both "action" and "motion" for every scene.',
+      exprGuide,
       tail,
-    ];
+    ].filter(Boolean);
   }
   return [
     'Shape:',
     '{',
     '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
-    '  "scene": { "time_of_day": "' + TIME_OF_DAY.join('|') + '", "location_text": "where she is, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase" },',
+    '  "scene": { "time_of_day": "' + v.time_of_day.join('|') + '", "location_text": "where she is, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase" },',
     '  "shots": [ { ' + enums + ', "action": "what she is doing in this shot, one short phrase" } ]',
     '}',
     'Produce exactly ' + n + ' shot' + (n === 1 ? '' : 's') + '. Vary framing across the shots so the set reads well together.',
+    exprGuide,
     tail,
-  ];
+  ].filter(Boolean);
 }
 
-function buildSystem(kind, motion, n) {
-  return DIRECTOR_HEAD.concat(bodyLines(motion, n)).join('\n');
+function buildSystem(kind, motion, n, v) {
+  return DIRECTOR_HEAD.concat(bodyLines(motion, n, v)).join('\n');
 }
 
-function buildReviewSystem(kind, motion, n) {
-  return REVIEWER_HEAD.concat(bodyLines(motion, n)).join('\n');
+function buildReviewSystem(kind, motion, n, v) {
+  return REVIEWER_HEAD.concat(bodyLines(motion, n, v)).join('\n');
 }
 
 async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, frameCount, tier = 'free', intent = 'cloud', userId = null } = {}, deps = {}) {
@@ -143,7 +206,8 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
 
   const nUnits = shotsForKind(kind, frameCount);
   const motion = MOTION.has(kind);
-  const system = buildSystem(kind, motion, nUnits);
+  const vocab = deps.vocab || await loadPlanVocab(avatarId);
+  const system = buildSystem(kind, motion, nUnits, vocab);
   const user = [
     'Creator: ' + av.name + (av.identity_block ? ' — ' + clip(av.identity_block, 400) : ''),
     'Format: ' + kind + (motion ? (nUnits === 1 ? ' (1 scene, ' + clipSeconds + 's)' : ' (' + nUnits + ' scenes x ' + clipSeconds + 's, ~' + (nUnits * clipSeconds) + 's total)') : ''),
@@ -166,7 +230,7 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   // STUDIO_PLAN_REVIEW=off.
   if (process.env.STUDIO_PLAN_REVIEW !== 'off') {
     const rounds = Math.max(1, Math.min(3, Number(process.env.STUDIO_PLAN_REVIEW_ROUNDS) || 3));
-    const reviewSystem = buildReviewSystem(kind, motion, nUnits);
+    const reviewSystem = buildReviewSystem(kind, motion, nUnits, vocab);
     const reviewModel = deps.reviewModel || await pickModel(llm, process.env.STUDIO_REVIEW_MODEL, { prefer: 'opus' });
     const contentKey = (o) => JSON.stringify(motion ? (o && o.scenes) : (o && o.shots));
     for (let round = 0; round < rounds; round += 1) {
@@ -193,44 +257,53 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
     // Each scene = its own place / outfit / time + one shot; stitched in order.
     const raw = Array.isArray(parsed.scenes) ? parsed.scenes : [];
     scenesOut = raw.slice(0, nUnits).map((sc) => ({
-      time_of_day: oneOf(sc && sc.time_of_day, TIME_OF_DAY, 'afternoon'),
+      time_of_day: oneOf(sc && sc.time_of_day, vocab.time_of_day, 'afternoon'),
       continuity: {
-        location_text: clip(sc && sc.location_text, 300),
-        wardrobe_text: clip(sc && sc.wardrobe_text, 300),
-        motion_text: clip(sc && sc.motion, 300) || undefined,
+        location_text: scrub(clip(sc && sc.location_text, 300)),
+        wardrobe_text: scrub(clip(sc && sc.wardrobe_text, 300)),
+        motion_text: scrub(clip(sc && sc.motion, 300)) || undefined,
       },
       shots: [{
-        framing: oneOf(sc && sc.framing, FRAMING, 'medium'),
-        light_direction: oneOf(sc && sc.light_direction, LIGHT_DIRECTION, 'camera_left'),
-        light_quality: oneOf(sc && sc.light_quality, LIGHT_QUALITY, 'soft'),
-        expression_key: oneOf(sc && sc.expression_key, EXPRESSION, 'soft_smile'),
-        expression_intensity: 'medium',
-        pose_key: clip(sc && sc.action, 240) || null,
+        framing: oneOf(sc && sc.framing, vocab.framing, 'medium'),
+        light_direction: oneOf(sc && sc.light_direction, vocab.light_direction, 'camera_left'),
+        light_quality: oneOf(sc && sc.light_quality, vocab.light_quality, 'soft'),
+        expression_key: oneOf(sc && sc.expression_key, vocab.expression, 'soft_smile'),
+        expression_intensity: oneOf(sc && sc.expression_intensity, INTENSITY, 'medium'),
+        pose_key: scrub(clip(sc && sc.action, 240)) || null,
         advanced_append: undefined,
       }],
     }));
+    // If the model returned fewer scenes than asked, don't pad with a BLANK scene
+    // (that renders her in a void) - clone the last real scene so the reel simply
+    // holds on a real setting. Only fall back to a bare default if there are none.
     while (scenesOut.length < nUnits) {
-      scenesOut.push({ time_of_day: 'afternoon', continuity: { location_text: '', wardrobe_text: '' },
-        shots: [{ framing: 'medium', light_direction: 'camera_left', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' }] });
+      const seed = scenesOut[scenesOut.length - 1];
+      scenesOut.push(seed
+        ? JSON.parse(JSON.stringify(seed))
+        : { time_of_day: 'afternoon', continuity: { location_text: '', wardrobe_text: '' },
+            shots: [{ framing: 'medium', light_direction: 'camera_left', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' }] });
     }
   } else {
     shots = (Array.isArray(parsed.shots) ? parsed.shots : []).slice(0, nUnits).map((s) => ({
-      framing: oneOf(s && s.framing, FRAMING, 'medium'),
-      light_direction: oneOf(s && s.light_direction, LIGHT_DIRECTION, 'camera_left'),
-      light_quality: oneOf(s && s.light_quality, LIGHT_QUALITY, 'soft'),
-      expression_key: oneOf(s && s.expression_key, EXPRESSION, 'soft_smile'),
-      expression_intensity: 'medium',
-      pose_key: clip(s && s.action, 240) || null,
+      framing: oneOf(s && s.framing, vocab.framing, 'medium'),
+      light_direction: oneOf(s && s.light_direction, vocab.light_direction, 'camera_left'),
+      light_quality: oneOf(s && s.light_quality, vocab.light_quality, 'soft'),
+      expression_key: oneOf(s && s.expression_key, vocab.expression, 'soft_smile'),
+      expression_intensity: oneOf(s && s.expression_intensity, INTENSITY, 'medium'),
+      pose_key: scrub(clip(s && s.action, 240)) || null,
       advanced_append: undefined,
     }));
     while (shots.length < nUnits) {
-      shots.push({ framing: 'medium', light_direction: 'camera_left', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' });
+      const seed = shots[shots.length - 1];
+      shots.push(seed
+        ? JSON.parse(JSON.stringify(seed))
+        : { framing: 'medium', light_direction: 'camera_left', light_quality: 'soft', expression_key: 'soft_smile', expression_intensity: 'medium' });
     }
     scene = {
-      time_of_day: oneOf(parsed.scene && parsed.scene.time_of_day, TIME_OF_DAY, 'afternoon'),
+      time_of_day: oneOf(parsed.scene && parsed.scene.time_of_day, vocab.time_of_day, 'afternoon'),
       continuity: {
-        location_text: clip(parsed.scene && parsed.scene.location_text, 300),
-        wardrobe_text: clip(parsed.scene && parsed.scene.wardrobe_text, 300),
+        location_text: scrub(clip(parsed.scene && parsed.scene.location_text, 300)),
+        wardrobe_text: scrub(clip(parsed.scene && parsed.scene.wardrobe_text, 300)),
       },
     };
   }
@@ -251,7 +324,22 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   const scenes = motion
     ? scenesOut
     : [{ time_of_day: scene.time_of_day, continuity: scene.continuity, shots }];
-  return { brief, kind, clipSeconds, scenes };
+  // The allowed vocabulary the plan was built against, so the storyboard editor
+  // offers exactly the same options (not a frozen frontend subset).
+  const options = {
+    framing: vocab.framing, light_direction: vocab.light_direction,
+    light_quality: vocab.light_quality, expression: vocab.expression,
+    time_of_day: vocab.time_of_day, intensity: vocab.intensity,
+  };
+  return { brief, kind, clipSeconds, scenes, options };
 }
 
-module.exports = { plan, PlanError, FRAMING, LIGHT_DIRECTION, LIGHT_QUALITY, EXPRESSION, TIME_OF_DAY };
+async function optionsForAvatar(avatarId) {
+  const v = await loadPlanVocab(avatarId);
+  return {
+    framing: v.framing, light_direction: v.light_direction, light_quality: v.light_quality,
+    expression: v.expression, time_of_day: v.time_of_day, intensity: v.intensity,
+  };
+}
+
+module.exports = { plan, optionsForAvatar, PlanError, FRAMING, LIGHT_DIRECTION, LIGHT_QUALITY, EXPRESSION, TIME_OF_DAY };
