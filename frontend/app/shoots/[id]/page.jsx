@@ -128,6 +128,7 @@ function Detail({ data, onApprove, onRefresh }) {
       {review && (
         <div style={S.reviewBox}>
           <div style={S.reviewHead}>Review your stills — pick the best for each scene</div>
+          {pr.failed > 0 ? <div style={S.reviewWarn}>A frame didn’t pass the face check. Pick another frame for that scene, or <b>Regenerate stills</b> to reshoot — nothing is animated until you approve.</div> : null}
           <div style={S.reviewMsg}>Nothing is animated yet, and no video renders until you approve. {shotIds.length} scene{shotIds.length === 1 ? "" : "s"}, {stills.length} candidate{stills.length === 1 ? "" : "s"}. Tap a frame to choose it (a ✓ marks the pick); then approve to animate the chosen ones.</div>
           <div style={S.sceneGroups}>
             {shotIds.map((sid, si) => {
@@ -223,6 +224,7 @@ const S = {
   failMsg: { fontSize: 13, color: "#8a6a6a", marginTop: 3 },
   reviewBox: { border: "1px solid #cfc6f5", background: "#f5f3ff", borderRadius: 10, padding: "14px 16px", marginBottom: 18 },
   reviewActions: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 14 },
+  reviewWarn: { fontSize: 13, color: "#8a5a2a", background: "#fff3e2", border: "1px solid #f0d9b8", borderRadius: 8, padding: "8px 10px", marginTop: 8 },
   rejectHint: { fontSize: 12, color: "#8a86a0", marginTop: 8, marginBottom: 0 },
   reviewHead: { fontSize: 15, fontWeight: 600, color: "#5b3df5" },
   reviewMsg: { fontSize: 13, color: "#6a6580", marginTop: 4 },

@@ -155,6 +155,15 @@ async function enqueueFreshStillPass(client, { tenantId, projectId, proj }) {
   );
   if (!shots.length) throw Object.assign(new Error('This shoot has no shots'), { status: 409 });
 
+  // A prior pass may have left a failed still/qc (a beat that missed the face
+  // check). Those are terminal and depend on nothing, but they linger as a
+  // 'failed' the status logic would otherwise count forever. Clear them so this
+  // fresh attempt starts clean.
+  await client.query(
+    `DELETE FROM render_jobs WHERE project_id = $1 AND status = 'failed' AND stage IN ('still','qc')`,
+    [projectId]
+  );
+
   const { rows: pj } = await client.query(
     `SELECT payload FROM render_jobs WHERE project_id = $1 AND stage = 'prompt' ORDER BY id DESC LIMIT 1`,
     [projectId]
@@ -760,18 +769,28 @@ const Orchestrator = {
       held: acc.held + s.held,
     }), { done: 0, total: 0, failed: 0, blocked: 0, held: 0 });
 
-    // At the review gate: every non-held job is done and held jobs remain, so the
-    // shoot is waiting on the user, not on a worker.
-    const atGate = totals.held > 0 && (totals.done + totals.held) === totals.total;
+    // Anything neither finished (done/failed/blocked) nor parked (held) is still
+    // executing — a queued or running still/qc, whether the first pass or a
+    // reshoot.
+    const inFlight = (totals.total - totals.done - totals.failed - totals.blocked - totals.held) > 0;
+
+    // Status precedence, and the load-bearing rule: while motion jobs are HELD
+    // the expensive step has not run, so the shoot is at the review gate and
+    // RECOVERABLE — a beat that missed QC does not fail the whole shoot, it just
+    // needs another regenerate or a manual pick. `failed` only wins once the gate
+    // is gone (approved) and something still failed.
+    const status = !totals.total ? 'running'
+      : inFlight ? 'running'
+      : totals.held > 0 ? 'review'
+      : totals.failed ? 'failed'
+      : totals.done === totals.total ? 'done'
+      : 'running';
 
     return {
       steps,
       ...totals,
       percent: totals.total ? Math.round((totals.done / totals.total) * 100) : 0,
-      status: totals.failed ? 'failed'
-        : (totals.done === totals.total && totals.total) ? 'done'
-        : atGate ? 'review'
-        : 'running',
+      status,
     };
   },
 };

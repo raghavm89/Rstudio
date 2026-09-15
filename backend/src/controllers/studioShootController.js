@@ -169,7 +169,7 @@ exports.progress = async (req, res) => {
   // Surfaced so the detail page can say what went wrong instead of a bare
   // "Failed", and so a rejected frame can show its QC reason and score.
   let failure = null;
-  if (project.status === 'failed' || progress.some?.((s) => s.failed)) {
+  if (progress.status === 'failed') {
     const { rows: fj } = await pool.query(
       `SELECT stage, label, error FROM render_jobs
         WHERE project_id = $1 AND status = 'failed' AND error IS NOT NULL
@@ -190,9 +190,9 @@ exports.list = async (req, res) => {
     `SELECT p.id, p.title, p.kind, p.slot_type, p.created_at,
             a.name AS avatar_name,
             CASE
-              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'failed') THEN 'failed'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status IN ('queued','claimed','running')) THEN 'generating'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'held') THEN 'review'
+              WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'failed') THEN 'failed'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id) THEN 'done'
               ELSE p.status
             END AS status,
@@ -458,6 +458,14 @@ exports.approve = async (req, res) => {
     [projectId, tenantId]
   );
   if (!proj[0]) return res.status(404).json({ error: 'Shoot not found' });
+
+  // Clear any terminal still/qc failures from earlier reshoots so approving a
+  // shoot whose frames are all picked doesn't leave it reading 'failed'. These
+  // jobs are terminal and nothing depends on them.
+  await pool.query(
+    `DELETE FROM render_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = 'failed' AND stage IN ('still','qc')`,
+    [projectId, tenantId]
+  );
 
   const { rowCount } = await pool.query(
     `UPDATE render_jobs SET status = 'queued', updated_at = NOW()
