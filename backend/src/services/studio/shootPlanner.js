@@ -84,6 +84,7 @@ const REVIEWER_HEAD = [
   '4) DISTINCTNESS and ARC - a multi-step how-to is DIFFERENT steps, not near-identical poses; a story reel has a clear beginning, middle and end.',
   '5) GROUNDING - real Indian settings, festivals, food, wardrobe where the idea calls for it.',
   '6) NO AI-TELLS - never write phrases that make an image read as AI-generated ("flawless", "poreless", "perfect symmetry", "glowing skin", "porcelain skin", "airbrushed"). If the draft has any, remove them. Describe wardrobe, place and action plainly.',
+  'Also add a top-level boolean field "good": true ONLY if the plan now needs no further improvement, false if another pass could still make it better. Keep every other field exactly as the schema below.',
   'Output ONLY the improved JSON object - no prose, no markdown fences, no commentary.',
 ];
 
@@ -149,8 +150,8 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
     'Idea: ' + clip(idea, 800),
   ].join('\n');
 
-  const model = deps.model || await pickModel(llm, process.env.STUDIO_PLAN_MODEL || process.env.STUDIO_COPY_MODEL);
-  const resp = await llm.messages.create({ model, max_tokens: 1024, system, messages: [{ role: 'user', content: user }] });
+  const model = deps.model || await pickModel(llm, process.env.STUDIO_PLAN_MODEL, { prefer: 'sonnet' });
+  const resp = await llm.messages.create({ model, max_tokens: 1536, system, messages: [{ role: 'user', content: user }] });
   const textBlock = (resp.content || []).find((b) => b.type === 'text') || (resp.content || [])[0];
   let parsed = extractJson(textBlock && textBlock.text);
 
@@ -164,18 +165,25 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   // director's plan — planning must never block on the reviewer. Skippable with
   // STUDIO_PLAN_REVIEW=off.
   if (process.env.STUDIO_PLAN_REVIEW !== 'off') {
-    try {
-      const reviewSystem = buildReviewSystem(kind, motion, nUnits);
-      const reviewUser = user + '\n\nJunior director\u2019s draft to improve (return the same shape, same number of ' + (motion ? 'scenes' : 'shots') + '):\n' + JSON.stringify(parsed);
-      const reviewModel = deps.reviewModel || await pickModel(llm, process.env.STUDIO_REVIEW_MODEL, { prefer: 'sonnet' });
-      const rresp = await llm.messages.create({ model: reviewModel, max_tokens: 1536, system: reviewSystem, messages: [{ role: 'user', content: reviewUser }] });
-      const rblock = (rresp.content || []).find((b) => b.type === 'text') || (rresp.content || [])[0];
-      const reviewed = extractJson(rblock && rblock.text);
-      if (reviewed && (Array.isArray(reviewed.scenes) || Array.isArray(reviewed.shots))) {
-        if (!reviewed.brief && parsed.brief) reviewed.brief = parsed.brief;  // keep the brief if the editor dropped it
-        parsed = reviewed;
-      }
-    } catch (_) { /* keep the director's plan; the review is a bonus, not a gate */ }
+    const rounds = Math.max(1, Math.min(3, Number(process.env.STUDIO_PLAN_REVIEW_ROUNDS) || 3));
+    const reviewSystem = buildReviewSystem(kind, motion, nUnits);
+    const reviewModel = deps.reviewModel || await pickModel(llm, process.env.STUDIO_REVIEW_MODEL, { prefer: 'opus' });
+    const contentKey = (o) => JSON.stringify(motion ? (o && o.scenes) : (o && o.shots));
+    for (let round = 0; round < rounds; round += 1) {
+      let reviewed;
+      try {
+        const reviewUser = user + '\n\nJunior director\u2019s draft to improve (return the same shape, same number of ' + (motion ? 'scenes' : 'shots') + ', plus a top-level "good" boolean):\n' + JSON.stringify(parsed);
+        const rresp = await llm.messages.create({ model: reviewModel, max_tokens: 2048, system: reviewSystem, messages: [{ role: 'user', content: reviewUser }] });
+        const rblock = (rresp.content || []).find((b) => b.type === 'text') || (rresp.content || [])[0];
+        reviewed = extractJson(rblock && rblock.text);
+      } catch (_) { break; }                                   // keep the best plan so far
+      if (!reviewed || !(Array.isArray(reviewed.scenes) || Array.isArray(reviewed.shots))) break;
+      if (!reviewed.brief && parsed.brief) reviewed.brief = parsed.brief;   // keep the brief if the editor dropped it
+      const converged = contentKey(reviewed) === contentKey(parsed);
+      const good = reviewed.good === true || reviewed.good === 'true';
+      parsed = reviewed;
+      if (good || converged) break;                            // nothing more to gain this round
+    }
   }
 
   let scenesOut = null;

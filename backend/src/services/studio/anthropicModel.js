@@ -20,7 +20,12 @@ const cached = {};
 async function pickModel(llm, preferred, { prefer = 'haiku' } = {}) {
   if (preferred) return preferred;                 // explicit env override always wins
   if (cached[prefer]) return cached[prefer];
-  const order = prefer === 'sonnet' ? [/sonnet/i, /haiku/i] : [/haiku/i, /sonnet/i];
+  // Tier preference, best-effort: opus for judgement (the plan reviewer), sonnet
+  // for solid drafting, haiku for cheap high-volume. Each falls back DOWN the
+  // ladder if its tier is not on the account, so a missing Opus becomes Sonnet.
+  const order = prefer === 'opus' ? [/opus/i, /sonnet/i, /haiku/i]
+    : prefer === 'sonnet' ? [/sonnet/i, /haiku/i, /opus/i]
+    : [/haiku/i, /sonnet/i];
   try {
     const page = await llm.models.list({ limit: 100 });
     const ids = ((page && (page.data || page.models)) || []).map((m) => m && m.id).filter(Boolean);
@@ -29,7 +34,9 @@ async function pickModel(llm, preferred, { prefer = 'haiku' } = {}) {
     pick = pick || ids[0];
     if (pick) { cached[prefer] = pick; return pick; }
   } catch (_) { /* fall through to the last-resort default */ }
-  return prefer === 'sonnet' ? 'claude-3-5-sonnet-latest' : 'claude-3-5-haiku-latest';
+  // Can't read the list: don't guess an Opus id that may 404 — a known Sonnet is
+  // the safe premium fallback, a known Haiku the safe cheap one.
+  return prefer === 'haiku' ? 'claude-3-5-haiku-latest' : 'claude-3-5-sonnet-latest';
 }
 
 module.exports = { pickModel };
