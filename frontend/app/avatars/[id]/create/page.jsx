@@ -24,6 +24,8 @@ const FORMATS = [
 ];
 const CATEGORY_LABEL = { ad_video: "Ad video", viral_video: "Viral video", viral_stills: "Viral stills" };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+// Absolute storage URLs -> same-origin proxy path (ngrok-safe); relative /templates paths pass through.
+const toLocal = (u) => { if (!u) return u; try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; } };
 const FRAMINGS = ["close", "medium", "wide", "full"];
 const EXPRESSIONS = ["neutral", "soft_smile", "confident", "laughing", "shy"];
 const TIMES = ["morning", "midday", "afternoon", "golden", "night"];
@@ -224,7 +226,7 @@ function Templates({ avatarId }) {
               {list.map((t) => (
                 <div key={t.id} style={S.tcard}>
                   <div style={S.tcover}>
-                    {t.cover_url ? <img src={t.cover_url} alt={t.name} style={S.timg} /> : <span style={S.tglyph}>{t.kind === "carousel" || t.kind === "post" ? "▦" : "►"}</span>}
+                    {t.cover_url ? <img src={toLocal(t.cover_url)} alt={t.name} style={S.timg} /> : <span style={S.tglyph}>{t.kind === "carousel" || t.kind === "post" ? "▦" : "►"}</span>}
                     <span style={S.tbadge}>{CATEGORY_LABEL[t.category] || t.category}</span>
                   </div>
                   <div style={S.tbody}>

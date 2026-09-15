@@ -6,6 +6,7 @@ import Link from "next/link";
 import { post, api, errorText } from "../../lib/api";
 import { useResource, Resource } from "../../components/Guard";
 import { useAuth } from "../../components/AuthProvider";
+const toLocal = (u) => { if (!u) return u; try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; } };
 
 /**
  * Content templates — pick a ready-made ad / viral recipe and shoot it.
@@ -142,7 +143,7 @@ function Browse({ d, avatars, reload }) {
           <div key={t.id} style={S.card}>
             <div style={S.cover}>
               {t.cover_url
-                ? <img src={t.cover_url} alt={t.name} style={S.img} />
+                ? <img src={toLocal(t.cover_url)} alt={t.name} style={S.img} />
                 : <span style={S.kindGlyph}>{t.kind === "carousel" || t.kind === "post" ? "▦" : "►"}</span>}
               <span style={S.badge}>{CATEGORY_LABEL[t.category] || t.category}</span>
               {!t.is_platform && <span style={S.mine}>Yours</span>}

@@ -152,13 +152,24 @@ const ContentTemplate = {
     );
     if (!shots.length) throw new TemplateError('That shoot has no shots to template', { status: 409 });
 
+    // A cover, so a saved template previews what it makes (like an avatar shows
+    // its face): the shoot's chosen still — the frame the human picked at review.
+    const { rows: cov } = await client.query(
+      `SELECT storage_url FROM studio_assets
+        WHERE project_id = $1 AND kind = 'still' AND storage_url IS NOT NULL
+          AND qc_status IS DISTINCT FROM 'superseded'
+        ORDER BY selected DESC, created_at DESC LIMIT 1`,
+      [project.id]
+    );
+    const coverUrl = cov[0] ? cov[0].storage_url : null;
+
     const recipe = {
       brief: { ...(project.brief || {}), slot_type: project.slot_type, trend_source: project.trend_source },
       scene: { location_key: scene.location_key, time_of_day: scene.time_of_day, continuity: scene.continuity || {} },
       shots,
       clip_seconds: 5,
     };
-    return this.create(client, { tenantId, userId, name: name || `Template from shoot #${project.id}`, category, kind: project.kind, recipe });
+    return this.create(client, { tenantId, userId, name: name || `Template from shoot #${project.id}`, category, kind: project.kind, recipe, coverUrl });
   },
 
   /** Delete one of the tenant's OWN templates (never a platform one). */
