@@ -30,7 +30,7 @@ import { auth } from '../lib/auth';
 // is the entire reason they are on that page. Omitted, the guard bounces the
 // emailed link straight to /login and the reset journey dead-ends one click
 // from the end.
-const PUBLIC_ROUTES = ['/', '/persona', '/mascot', '/login', '/signup', '/auth/callback', '/forgot-password', '/reset-password'];
+const PUBLIC_ROUTES = ['/', '/persona', '/clone', '/mascot', '/login', '/signup', '/auth/callback', '/forgot-password', '/reset-password'];
 const isPublic = (path) => PUBLIC_ROUTES.some((p) => path === p || path.startsWith(`${p}/`));
 
 const AuthContext = createContext(null);

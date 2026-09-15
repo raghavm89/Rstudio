@@ -54,11 +54,16 @@ export default function Landing({ assets = null }) {
 
         {/* ── one machine, two creators ────────────────── */}
         <section className="z-lanes">
-          <div className="z-lanes-label mono">ONE MACHINE,<br />TWO CREATORS →</div>
+          <div className="z-lanes-label mono">ONE MACHINE,<br />THREE CREATORS →</div>
           <Link className="z-lane" href="/persona">
             <span className="thumb"><img src="/hero/setup-close.jpg" alt="" /></span>
             <span><span className="t">AI persona</span><br /><span className="s">A creator or influencer</span></span>
             <span className="arr">→</span>
+          </Link>
+          <Link className="z-lane" href="/clone">
+            <span className="thumb"><img src="/hero/poster.jpg" alt="" /></span>
+            <span><span className="t">AI clone</span><br /><span className="s">Your likeness, live</span></span>
+            <span className="arr">&rarr;</span>
           </Link>
           <Link className="z-lane" href="/mascot">
             <span className="thumb"><video src="/hero/mascot/hero.mp4" poster="/hero/mascot/hero.jpg" autoPlay muted loop playsInline /></span>

@@ -33,6 +33,7 @@ export function ZoqNav({ active = '' }) {
       </Link>
       <div className="z-navlinks">
         <Link href="/persona" className={active === 'persona' ? 'on' : ''}>Persona</Link>
+        <Link href="/clone" className={active === 'clone' ? 'on' : ''}>Clone</Link>
         <Link href="/mascot" className={active === 'mascot' ? 'on' : ''}>Mascot</Link>
         <Link href="/#pricing" className="hidesm">Pricing</Link>
         {signedIn

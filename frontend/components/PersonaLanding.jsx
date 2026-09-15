@@ -23,7 +23,7 @@ export default function PersonaLanding({ assets = null }) {
             <span className="z-kick"><span className="dot" />LANE 01 · AI PERSONA</span>
             <h1 className="z-h1">Create your<br /><span className="a">AI creator.</span></h1>
             <p className="z-deck">
-              A human-looking avatar — invent a new face, or clone your own. She keeps the
+              A human-looking avatar — a brand-new face invented for you. She keeps the
               same look across every reel and photo, so the feed feels like <b>one real person</b>.
             </p>
             <div className="z-proofbar">
@@ -32,7 +32,7 @@ export default function PersonaLanding({ assets = null }) {
               <span className="val">0.91</span>
             </div>
             <div className="z-chips">
-              <span>Synthetic or your clone</span><span>Talks &amp; performs</span><span>QC on every frame</span>
+              <span>A new, invented face</span><span>Talks &amp; performs</span><span>QC on every frame</span>
             </div>
             <div className="z-cta">
               <Link className="z-btn" href={go}>Build your persona

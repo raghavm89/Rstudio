@@ -87,7 +87,7 @@
 .z-plate .slate .v { color: var(--vl); }
 
 /* ── two-lane handoff (main) ─────────────────────────── */
-.z-lanes { display: grid; grid-template-columns: auto 1fr 1fr; gap: 18px; align-items: stretch; padding: 8px 0 40px; }
+.z-lanes { display: grid; grid-template-columns: auto 1fr 1fr 1fr; gap: 14px; align-items: stretch; padding: 8px 0 40px; }
 .z-lanes-label { font-family: var(--mono); font-size: 12px; color: var(--mut2); letter-spacing: .04em; max-width: 150px; line-height: 1.5; align-self: center; }
 .z-lane { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 16px; background: var(--card2); border: 1px solid var(--line); color: var(--ink) !important; transition: border-color .16s ease, transform .16s ease; }
 .z-lane:hover { border-color: rgba(91,61,245,.5); transform: translateY(-2px); }
