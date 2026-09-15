@@ -163,6 +163,15 @@ async function main() {
   );
   if (!vocabulary.length) throw new Error(`No active prompt_vocabulary for version ${avatar.vocabulary_version}`);
 
+  // The same closed-vocabulary clamp createShoot uses: a seeded template may
+  // carry a facet value the vocabulary never defined (e.g. light_direction
+  // "window" / "backlit"). The live pipeline clamps those to a safe fallback at
+  // shoot time; buildWorkflow called directly would instead throw, so clamp here
+  // too — otherwise a stale template renders no cover.
+  const vocabByFacet = {};
+  for (const r of vocabulary) (vocabByFacet[r.facet] = vocabByFacet[r.facet] || new Set()).add(r.option_key);
+  const clamp = (facet, val, fb) => (val && vocabByFacet[facet] && vocabByFacet[facet].has(val)) ? val : fb;
+
   const { rows: templates } = await pool.query(
     `SELECT id, slug, name, kind, recipe, cover_url FROM content_templates
       WHERE is_platform = TRUE ${FORCE ? '' : 'AND cover_url IS NULL'}
@@ -200,11 +209,13 @@ async function main() {
           skin: avatar.skin, natural_asymmetry: avatar.natural_asymmetry, hair_detail: avatar.hair_detail,
         },
         shot: {
-          framing: shot.framing || 'medium', light_direction: shot.light_direction || 'camera_left',
-          light_quality: shot.light_quality || 'soft', expression_key: shot.expression_key || 'soft_smile',
+          framing: clamp('framing', shot.framing, 'medium'),
+          light_direction: clamp('light_direction', shot.light_direction, 'camera_left'),
+          light_quality: clamp('light_quality', shot.light_quality, 'soft'),
+          expression_key: clamp('expression', shot.expression_key, 'soft_smile'),
           pose_key: shot.pose_key || null, advanced_append: shot.advanced_append || null,
         },
-        scene: { location_key: scene.location_key || null, time_of_day: scene.time_of_day || 'afternoon' },
+        scene: { location_key: scene.location_key || null, time_of_day: clamp('time_of_day', scene.time_of_day, 'afternoon') },
         vocabulary,
         locationText: cont.location_text || '',
         wardrobeText: cont.wardrobe_text || '',
