@@ -36,6 +36,7 @@ const ROOT = path.join(__dirname, '..');
 const pool = require(path.join(ROOT, 'src/config/db'));
 const { buildWorkflow, WorkflowError } = require(path.join(ROOT, 'src/services/studio/comfyui/buildWorkflow'));
 const { FalProvider } = require(path.join(ROOT, 'worker/providers/fal'));
+const { createStorage } = require(path.join(ROOT, 'src/services/studio/storageFactory'));
 
 const OUT_DIR = path.join(ROOT, '..', 'frontend', 'public', 'templates');
 const PUBLIC_PREFIX = '/templates';
@@ -128,14 +129,16 @@ async function loadAvatar() {
 
 async function resolveLoraUrl(filePath) {
   if (/^https?:\/\//i.test(filePath)) return filePath;
-  const storageRoot = process.env.STUDIO_STORAGE_ROOT || path.join(ROOT, 'studio-storage');
-  const candidates = [filePath, path.join(storageRoot, filePath), path.resolve(filePath)];
-  const local = candidates.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
-  if (!local) throw new Error(`Cannot find the LoRA file. Looked for:\n  ${candidates.join('\n  ')}`);
-  const bytes = fs.readFileSync(local);
-  process.stdout.write(`  Uploading LoRA to fal (${(bytes.length / 1048576).toFixed(1)} MB)… `);
-  const url = await new FalProvider({ apiKey: KEY }).uploadToFalStorage(bytes, { filename: path.basename(local), contentType: 'application/octet-stream' });
-  console.log('done');
+  // Same as the render pipeline: hand fal the storage layer's PUBLIC URL so it
+  // FETCHES the LoRA. The trained LoRA is ~131 MB, over fal's ~94 MB
+  // direct-upload wall, so uploading is not an option — this is why shoots serve
+  // it by URL. Requires STUDIO_PUBLIC_BASE to point at a host fal can reach (the
+  // same tunnel/bucket the live shoots use).
+  const url = createStorage().readUrl(filePath);
+  if (!/^https?:\/\//i.test(String(url))) {
+    throw new Error(`The LoRA must be served by a public URL fal can fetch, but the storage layer returned "${url}". `
+      + 'Set STUDIO_PUBLIC_BASE in .env to the same URL your running shoots use, then re-run.');
+  }
   return url;
 }
 
