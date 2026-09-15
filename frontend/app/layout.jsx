@@ -3,8 +3,8 @@ import Shell from '../components/Shell';
 import { AuthProvider } from '../components/AuthProvider';
 
 export const metadata = {
-  title: 'Rstudio',
-  description: 'Find the face, set the look, shoot.',
+  title: 'ZoQ — AI creators, made for India',
+  description: 'Your AI creator, posting for you. The same face, every shot.',
 };
 
 export default function RootLayout({ children }) {
@@ -14,7 +14,7 @@ export default function RootLayout({ children }) {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Bodoni+Moda:ital,wght@0,400;0,500;1,400&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&family=Bodoni+Moda:ital,wght@0,400;0,500;1,400&display=swap"
           rel="stylesheet"
         />
       </head>

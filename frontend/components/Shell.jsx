@@ -133,9 +133,9 @@ export default function Shell({ children }) {
             name is a shape you have to already know, and this is the first
             thing someone sees after signing in. */}
         <div className="brand">
-          <Link href="/avatars" className="brand-id" aria-label="Rstudio — home">
+          <Link href="/avatars" className="brand-id" aria-label="ZoQ — home">
             <span className="mark">R</span>
-            <span className="brand-name">Rstudio</span>
+            <span className="brand-name">ZoQ</span>
           </Link>
           {/* The app had no route back to the public site at all: once you were
               in, the only way out was the browser's back button or editing the

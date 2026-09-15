@@ -1,263 +1,118 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
+import '../app/zoq.css';
 import '../app/landing.css';
 import { useAuth } from './AuthProvider';
-import Plate, { timecode } from './Plate';
+import Plate from './Plate';
+import { ZoqNav, ZoqFooter } from './ZoqChrome';
 
 /**
- * studio.rstudio.app — the front door.
+ * zoq.app — the front door (cinematic register).
  *
- * Deliberately not the app's design system. Direction C exists for someone
- * working: flat, quiet, legible for an hour. A landing page gets eight seconds
- * and a different job — say what kind of thing this is before anyone reads a
- * word. So this is set as a fashion title, which is the register the work itself
- * lives in, and shares exactly one thing with the app: the violet.
+ * DARK and video-forward: a light SaaS page can't carry the promise of a
+ * cinematic avatar. This is deliberately NOT the app's bright Direction-C look —
+ * it shares only the brand tokens (flat violet, Figtree + Plex Mono, rounded,
+ * film grain). The hero plays a real generated Aanya clip via <Plate>; the two
+ * lanes hand off to /persona and /mascot.
  *
- * ── Two states, both finished ───────────────────────────────────────────────
- * With `assets`, the hero is a real generated clip under film grain and a slate.
- * Without, it is a drawn plate: a lit, grained, captioned frame that cycles its
- * setup. The second is not a placeholder — it is what the page looks like before
- * `studio/hero-assets.js` has been run, and it is meant to be shippable, because
- * a front page that is broken until a build step runs is a front page that will
- * one day be broken in front of someone.
- *
- * ── What the page may and may not claim ─────────────────────────────────────
- * The frames come from ONE take. Image-to-video preserves identity by
- * construction, so "the same face, six moments" is true. "Six setups from one
- * brief" would not be — that needs her trained LoRA, and until it exists the
- * copy says the weaker true thing.
- *
- * Likewise the slate. It shows a likeness score only when the manifest carries
- * one, which happens after QC has actually measured frames against calibrated
- * baselines. Before that it shows generation metadata, which is real. A number
- * invented for a screenshot is the one thing on this page that would be worth
- * nothing.
+ * Two finished states, as before: with `assets` (from public/hero/manifest.json,
+ * written by studio/hero-assets.js) the plate plays real footage; without, it
+ * draws its lit empty frame. Neither is broken.
  */
-
-const SHEET = [
-  { label: 'Close', hue: 'rgba(255,241,214,.85)', x: '18%', y: '22%', s: 76 },
-  { label: 'Medium', hue: 'rgba(91,61,245,.75)', x: '64%', y: '30%', s: 84 },
-  { label: 'Full', hue: 'rgba(232,120,80,.7)', x: '38%', y: '68%', s: 92 },
-  { label: 'Reel 9:16', hue: 'rgba(255,241,214,.7)', x: '70%', y: '18%', s: 70 },
-  { label: 'Cover', hue: 'rgba(91,61,245,.6)', x: '26%', y: '54%', s: 88 },
-  { label: 'Detail', hue: 'rgba(232,120,80,.55)', x: '56%', y: '62%', s: 74 },
-];
-
 export default function Landing({ assets = null }) {
   const { signedIn } = useAuth();
-  // A video that cannot decode leaves a black rectangle where the hero should
-  // be, and it happens for reasons the page cannot see: a browser build without
-  // an H.264 decoder, a proxy that mangles the range request, a corrupt upload.
-  // Falling back to the drawn plate means the worst case is the page we already
-  // consider shippable, rather than a hole.
-
-  // Three possible sheets, and the copy below follows whichever one is real:
-  // six generated setups (needs her LoRA), six frames from one take, or the
-  // drawn cells. The claim is derived from what is on the page rather than
-  // asserted over it.
-  const setups = assets?.setups?.length ? assets.setups : null;
-  const sheet = setups || (assets?.frames?.length ? assets.frames : null);
+  const go = signedIn ? '/avatars' : '/signup';
 
   return (
-    <div className="lp">
-      <div className="lp-wrap">
+    <div className="z">
+      <div className="z-glow tr" />
+      <div className="z-wrap">
+        <ZoqNav active="" />
 
-        <header className="lp-masthead">
-          <div className="word">Rstudio</div>
-          <nav className="lp-mast-right">
-            <a href="#how">How it works</a>
-            <a href="#pricing">Pricing</a>
-            {signedIn
-              ? <Link className="cta" href="/avatars">Open Studio</Link>
-              : <Link className="cta" href="/login">Sign in</Link>}
-          </nav>
-        </header>
-
-        {/* ── Hero ───────────────────────────────────────────────────────── */}
-        <section className="lp-hero">
-          <div>
-            <div className="lp-kicker lp-rise">AI Persona Studio — for Indian creators</div>
-
-            <h1 className="lp-h1 lp-rise lp-rise-2">
-              One face.<br />
-              <em>Every</em> post.
-            </h1>
-
-            <p className="lp-deck lp-rise lp-rise-3">
-              Train a persona once. Then shoot a week of photos and reels from a single
-              brief — <b>the same face, the same look, every time</b>. No prompt writing,
-              no re-rolling until one frame happens to match.
+        {/* ── hero ─────────────────────────────────────── */}
+        <section className="z-hero">
+          <div className="z-hero-copy">
+            <span className="z-kick"><span className="dot" />AI CREATORS · MADE FOR INDIA</span>
+            <h1 className="z-h1">Your AI creator.<br /><span className="a">Posting for you.</span></h1>
+            <p className="z-deck">
+              Describe an idea — get a finished reel or photo of your avatar, in trending
+              Hinglish, festival and lifestyle formats. <b>The same face, every single shot.</b>
             </p>
-
-            <div className="lp-actions lp-rise lp-rise-4">
-              <Link className="lp-btn" href={signedIn ? '/avatars' : '/signup'}>
-                {signedIn ? 'Open Studio' : 'Start free'} <span aria-hidden="true">→</span>
+            <div className="z-cta">
+              <Link className="z-btn" href={go}>Create your avatar
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </Link>
-              <a className="lp-btn ghost" href="#how">See how it works</a>
+              <a className="z-btn ghost" href="#how">See it work</a>
             </div>
-            <p className="lp-note lp-rise lp-rise-4">
-              Free tier · No card · Nothing publishes without you
-            </p>
+            <div className="z-chips">
+              <span>Same face, every shot</span><span>Reels + photos</span><span>Auto-post to IG &amp; YouTube</span>
+            </div>
           </div>
-
-          <Plate assets={assets} className="lp-rise lp-rise-3" />
-
+          <Plate assets={assets} label="Aanya Kapoor, generated — one take" />
         </section>
 
-        {/* ── Contact sheet ──────────────────────────────────────────────── */}
-        <section className="lp-sheet">
-          <div className="lp-sheet-head">
-            {/* The claim changes with what is actually on the page. Frames cut
-                from one take are the same person by construction; six separate
-                generations without a trained LoRA would not be, and saying so
-                anyway would be a false claim about the product on the product's
-                own front page. */}
-            <span>
-              {setups
-                ? <><b>One persona</b> — {setups.length} setups from a single brief</>
-                : sheet
-                  ? <><b>One take</b> — {sheet.length} frames, the same face throughout</>
-                  : <><b>One persona</b> — six setups from a single brief</>}
-            </span>
-            <span>Contact sheet · Aanya Kapoor · Roll 01</span>
-          </div>
-
-          <div className="lp-strip">
-            {sheet
-              ? sheet.map((c) => (
-                <div className="lp-cell" key={c.src}>
-                  <img className="lp-cell-img" src={c.src} alt="" loading="lazy" />
-                  <div className="lp-plate-grain" />
-                  {/* A generated setup is captioned by its setup; a frame cut
-                      from the clip is captioned by its timecode. Labelling a
-                      frame "Close · 85mm" would describe a shot nobody set up. */}
-                  <div className="lp-cell-cap">{c.label || timecode(Number(c.t))}</div>
-                </div>
-              ))
-              : SHEET.map((c) => (
-                <div className="lp-cell" key={c.label}>
-                  <div
-                    className="lp-cell-l"
-                    style={{ left: c.x, top: c.y, width: `${c.s}%`, height: `${c.s}%`,
-                             transform: 'translate(-50%,-50%)',
-                             background: `radial-gradient(circle, ${c.hue}, transparent 70%)` }}
-                  />
-                  <div className="lp-plate-grain" />
-                  <div className="lp-cell-cap">{c.label}</div>
-                </div>
-              ))}
-          </div>
+        {/* ── one machine, two creators ────────────────── */}
+        <section className="z-lanes">
+          <div className="z-lanes-label mono">ONE MACHINE,<br />TWO CREATORS →</div>
+          <Link className="z-lane" href="/persona">
+            <span className="thumb"><img src="/hero/setup-close.jpg" alt="" /></span>
+            <span><span className="t">AI persona</span><br /><span className="s">A creator or influencer</span></span>
+            <span className="arr">→</span>
+          </Link>
+          <Link className="z-lane" href="/mascot">
+            <span className="thumb"><video src="/hero/mascot/hero.mp4" poster="/hero/mascot/hero.jpg" autoPlay muted loop playsInline /></span>
+            <span><span className="t">AI mascot</span><br /><span className="s">A brand character</span></span>
+            <span className="arr">→</span>
+          </Link>
         </section>
 
-        {/* ── Feature ────────────────────────────────────────────────────── */}
-        <section className="lp-feature" id="how">
-          <h2>
-            The hard part was never<br />
-            making <em>an</em> image.
-          </h2>
-          <p className="lp-deck">
-            It was making the four hundredth image look like the first one. Studio measures
-            every face against a calibrated likeness before you ever see a frame, so a feed
-            reads as one person who shot it — not a folder of strangers who nearly match.
+        {/* ── feature ──────────────────────────────────── */}
+        <section className="z-sec" id="how">
+          <p className="z-eyebrow">WHY IT HOLDS UP</p>
+          <h2 className="z-h2">The hard part was never<br />making <span className="a">an</span> image.</h2>
+          <p className="z-lead">
+            It was making the four-hundredth image look like the first. ZoQ measures every
+            face against a calibrated likeness before you ever see a frame, so a feed reads
+            as one person who shot it — not a folder of strangers who nearly match.
           </p>
-        </section>
-
-        <section className="lp-steps">
-          <div className="lp-step">
-            <span className="n">01</span>
-            <h3>Find the face</h3>
-            <p>
-              Pick from a catalogue, or build one from a seed set of your own. Studio trains
-              a model that belongs to you and keeps the file.
-            </p>
-            <span className="meta">~20 minutes, once</span>
-          </div>
-          <div className="lp-step">
-            <span className="n">02</span>
-            <h3>Set the look</h3>
-            <p>
-              Camera, lens, colour, grain, skin. Seven choices that go into every photo they
-              ever take — chosen from a vocabulary, not typed into a box.
-            </p>
-            <span className="meta">Chosen once, then locked</span>
-          </div>
-          <div className="lp-step">
-            <span className="n">03</span>
-            <h3>Shoot</h3>
-            <p>
-              One brief becomes a week: stills, reels, captions, and a schedule. Every frame
-              checked against their likeness before it reaches you.
-            </p>
-            <span className="meta">One click, nine steps</span>
+          <div className="z-steps">
+            <div className="z-step"><span className="n">01</span><h3>Find the face</h3><p>Pick from a catalogue, or build one from a seed set of your own. ZoQ trains a model that belongs to you and keeps the file.</p><span className="meta">~20 minutes, once</span></div>
+            <div className="z-step"><span className="n">02</span><h3>Set the look</h3><p>Camera, lens, colour, grain, skin — chosen from a vocabulary, not typed into a box, then locked into every shot.</p><span className="meta">Chosen once, then locked</span></div>
+            <div className="z-step"><span className="n">03</span><h3>Shoot</h3><p>One brief becomes a week: stills, reels, captions, a schedule. Every frame checked against their likeness first.</p><span className="meta">One idea, a finished reel</span></div>
           </div>
         </section>
 
-        {/* ── Close ──────────────────────────────────────────────────────── */}
-        <section className="lp-close" id="pricing">
+        {/* ── pricing ──────────────────────────────────── */}
+        <section className="z-sec" id="pricing">
+          <p className="z-eyebrow">PRICING</p>
+          <h2 className="z-h2">A monthly wallet you spend<br />however you like.</h2>
+          <div className="z-prices">
+            <div className="z-price"><div className="amt">Free</div><div className="plan">STARTER</div><div className="desc">40 credits / mo · ≈ 5 videos + 10 photos</div></div>
+            <div className="z-price"><div className="amt">₹999</div><div className="plan">CATALOGUE</div><div className="desc">150 credits · ≈ 20 videos + 30 photos</div></div>
+            <div className="z-price hot"><div className="amt">₹2,000</div><div className="plan">PRO</div><div className="desc">220 credits · ≈ 30 videos + 40 photos</div></div>
+            <div className="z-price"><div className="amt">₹7,000</div><div className="plan">MAX</div><div className="desc">750 credits · ≈ 100 videos + 150 photos</div></div>
+            <div className="z-price"><div className="amt">₹15,000</div><div className="plan">ULTRA</div><div className="desc">1,850 credits · ≈ 250 videos + 350 photos + live AI clone</div></div>
+          </div>
+          <p className="z-price-note">One credit is one photo; a video is about six. Each plan is a monthly credit wallet — trade photos for videos as you please. Top up any time at ₹500 for 77 credits.</p>
+        </section>
+
+        {/* ── close ────────────────────────────────────── */}
+        <section className="z-close">
           <div>
-            <h2>Start with a <em>free</em> shoot.</h2>
-            <p>
-              Build a persona, take a set of stills and one reel, and see whether the face
-              holds. No card, and nothing reaches Instagram until you press publish.
-            </p>
-            <div className="lp-actions">
-              <Link className="lp-btn" href={signedIn ? '/avatars' : '/signup'}>
-                {signedIn ? 'Open Studio' : 'Create your account'} <span aria-hidden="true">→</span>
+            <h2 className="z-h2">Start with a <span className="a">free</span> shoot.</h2>
+            <p className="z-lead">Build a persona, take a set of stills and one reel, and see whether the face holds. No card, and nothing reaches Instagram until you press publish.</p>
+            <div className="z-cta" style={{ marginTop: 24 }}>
+              <Link className="z-btn" href={go}>{signedIn ? 'Open Studio' : 'Create your account'}
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </Link>
             </div>
           </div>
-          {/* Five plans, and they are the ones in the plans table — not a
-              second set typed here. This block once said "Free · 240s" and
-              "₹1,499 Creator" while the app charged ₹12,000 for a plan called
-              Pro, which is the kind of disagreement a customer finds before you
-              do. It now quotes the monthly CREDIT WALLET each plan grants
-              (migrations 055 + 056) — the per-piece model, not seconds.
-
-              Still hardcoded, because the landing page is a server component
-              rendered without a session and the plans endpoint needs one. Worth
-              moving to a public endpoint the moment these numbers change again;
-              flagged here so the next person editing prices knows there are two
-              places until then — and credits.test.js guards the two against
-              drift. */}
-          <div className="lp-close-right">
-            <div className="lp-price">
-              Free
-              <small>40 credits a month · ≈ 5 videos + 10 photos</small>
-            </div>
-            <div className="lp-price" style={{ fontSize: 22 }}>
-              ₹999<small>Catalogue · 150 credits · ≈ 20 videos + 30 photos</small>
-            </div>
-            <div className="lp-price" style={{ fontSize: 22 }}>
-              ₹2,000<small>Pro · 220 credits · ≈ 30 videos + 40 photos</small>
-            </div>
-            <div className="lp-price" style={{ fontSize: 22 }}>
-              ₹7,000<small>Max · 750 credits · ≈ 100 videos + 150 photos</small>
-            </div>
-            <div className="lp-price" style={{ fontSize: 22 }}>
-              ₹15,000<small>Ultra · 1,850 credits · ≈ 250 videos + 350 photos</small>
-            </div>
-            <p className="lp-price-note">
-              One credit is one photo; a video is about six. Each plan is a
-              monthly credit wallet you spend however you like — trade photos for
-              videos as you please. Top up any time at ₹500 for 77 credits.
-            </p>
-          </div>
+          <p className="z-note" style={{ fontSize: 12, lineHeight: 1.7 }}>Free tier · No card · Nothing publishes without you · Every output labelled AI-generated</p>
         </section>
 
-        <footer className="lp-foot">
-          <span className="disclose">
-            Every persona is disclosed as AI-generated, in the bio and on every post.
-          </span>
-          <span>
-            <a href="mailto:hello@rstudio.app">hello@rstudio.app</a> · © 2026 Rstudio
-          </span>
-        </footer>
-
+        <ZoqFooter />
       </div>
     </div>
   );
 }
-
-
