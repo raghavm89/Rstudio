@@ -65,17 +65,33 @@ function extractJson(text) {
   catch { throw new PlanError('The planner returned malformed JSON — try again.', { status: 502 }); }
 }
 
-function buildSystem(kind, motion, n) {
-  const head = [
-    'You are a creative director for short-form social video aimed at an Indian audience (Instagram Reels, YouTube Shorts).',
-    "Turn the creator's idea into a concrete shoot plan. Be specific and culturally grounded - real Indian settings, festivals, food, wardrobe where relevant.",
-    "You control ONLY the setting, wardrobe, mood and camera. You NEVER change the creator's face or identity; that is fixed.",
-    'Output ONLY a single JSON object - no prose, no markdown fences.',
-  ];
+const DIRECTOR_HEAD = [
+  'You are a creative director for short-form social video aimed at an Indian audience (Instagram Reels, YouTube Shorts).',
+  "Turn the creator's idea into a concrete shoot plan. Be specific and culturally grounded - real Indian settings, festivals, food, wardrobe where relevant.",
+  "You control ONLY the setting, wardrobe, mood and camera. You NEVER change the creator's face or identity; that is fixed.",
+  'Output ONLY a single JSON object - no prose, no markdown fences.',
+];
+
+// The senior editor pass. Same schema and enums (bodyLines is shared), a
+// tougher brief: make the plan actually DELIVER the idea before a human sees it.
+const REVIEWER_HEAD = [
+  "You are a SENIOR creative director reviewing a junior director's shoot plan for short-form Indian social video (Reels/Shorts) before it reaches the human creator.",
+  'Return an IMPROVED version of the SAME plan: the same JSON shape and the SAME number of scenes/shots, the same creator (you NEVER change identity or face). Keep what the junior got right; change only what makes the plan better.',
+  'Improve, in priority order:',
+  '1) FIDELITY - every scene must deliver the idea. If the idea is a how-to or demonstration (for example "three back exercises"), each scene must SHOW a specific, distinct action with the equipment or props, not generic standing and posing. Rewrite the action and motion of any scene that does not serve the idea.',
+  '2) FRAMING for the content - a physical demonstration uses full or wide so the action is visible (a close-up cannot show an exercise); a talking explainer uses medium facing the camera; lifestyle may vary. Fix framing that fights the content.',
+  '3) COMPLETENESS - no empty or vague scene: every scene needs a concrete location_text, wardrobe_text, a real action, and a real motion. Fill anything the junior left thin.',
+  '4) DISTINCTNESS and ARC - a multi-step how-to is DIFFERENT steps, not near-identical poses; a story reel has a clear beginning, middle and end.',
+  '5) GROUNDING - real Indian settings, festivals, food, wardrobe where the idea calls for it.',
+  '6) NO AI-TELLS - never write phrases that make an image read as AI-generated ("flawless", "poreless", "perfect symmetry", "glowing skin", "porcelain skin", "airbrushed"). If the draft has any, remove them. Describe wardrobe, place and action plainly.',
+  'Output ONLY the improved JSON object - no prose, no markdown fences, no commentary.',
+];
+
+function bodyLines(motion, n) {
   const enums = '"framing": "' + FRAMING.join('|') + '", "light_direction": "' + LIGHT_DIRECTION.join('|') + '", "light_quality": "' + LIGHT_QUALITY.join('|') + '", "expression_key": "' + EXPRESSION.join('|') + '"';
   const tail = 'Use ONLY the allowed enum values for framing, light_direction, light_quality and expression_key. Put anything descriptive into the text fields (location_text, wardrobe_text, action).';
   if (motion) {
-    return head.concat([
+    return [
       'Shape:',
       '{',
       '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
@@ -88,9 +104,9 @@ function buildSystem(kind, motion, n) {
         : ('Produce exactly ' + n + ' scenes, each animated and stitched IN ORDER into one reel that MOVES as a mini story with a beginning, middle and end. For a how-to, make each scene a DIFFERENT step or exercise. Each scene has its OWN location_text, wardrobe_text and time_of_day (she can travel between them), plus its own action and motion. Keep the SAME person throughout; wardrobe may change between scenes if the story calls for it.')),
       'Fill both "action" and "motion" for every scene.',
       tail,
-    ]).join('\n');
+    ];
   }
-  return head.concat([
+  return [
     'Shape:',
     '{',
     '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
@@ -99,7 +115,15 @@ function buildSystem(kind, motion, n) {
     '}',
     'Produce exactly ' + n + ' shot' + (n === 1 ? '' : 's') + '. Vary framing across the shots so the set reads well together.',
     tail,
-  ]).join('\n');
+  ];
+}
+
+function buildSystem(kind, motion, n) {
+  return DIRECTOR_HEAD.concat(bodyLines(motion, n)).join('\n');
+}
+
+function buildReviewSystem(kind, motion, n) {
+  return REVIEWER_HEAD.concat(bodyLines(motion, n)).join('\n');
 }
 
 async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, frameCount, tier = 'free', intent = 'cloud', userId = null } = {}, deps = {}) {
@@ -128,7 +152,31 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   const model = deps.model || await pickModel(llm, process.env.STUDIO_PLAN_MODEL || process.env.STUDIO_COPY_MODEL);
   const resp = await llm.messages.create({ model, max_tokens: 1024, system, messages: [{ role: 'user', content: user }] });
   const textBlock = (resp.content || []).find((b) => b.type === 'text') || (resp.content || [])[0];
-  const parsed = extractJson(textBlock && textBlock.text);
+  let parsed = extractJson(textBlock && textBlock.text);
+
+  // ── AI reviewer ──────────────────────────────────────────────────────────
+  // A second, stronger pass (Sonnet by default) edits the junior director's
+  // draft BEFORE the human sees it at Gate 1: fidelity to the idea, framing that
+  // fits the content, no empty scenes, distinct steps, and no AI-tell phrases in
+  // the free text. It returns the SAME schema and scene count, so its output
+  // flows through the exact same sanitiser below. Best-effort by design: any
+  // failure (bad JSON, API error, a review that drops the scenes) keeps the
+  // director's plan — planning must never block on the reviewer. Skippable with
+  // STUDIO_PLAN_REVIEW=off.
+  if (process.env.STUDIO_PLAN_REVIEW !== 'off') {
+    try {
+      const reviewSystem = buildReviewSystem(kind, motion, nUnits);
+      const reviewUser = user + '\n\nJunior director\u2019s draft to improve (return the same shape, same number of ' + (motion ? 'scenes' : 'shots') + '):\n' + JSON.stringify(parsed);
+      const reviewModel = deps.reviewModel || await pickModel(llm, process.env.STUDIO_REVIEW_MODEL, { prefer: 'sonnet' });
+      const rresp = await llm.messages.create({ model: reviewModel, max_tokens: 1536, system: reviewSystem, messages: [{ role: 'user', content: reviewUser }] });
+      const rblock = (rresp.content || []).find((b) => b.type === 'text') || (rresp.content || [])[0];
+      const reviewed = extractJson(rblock && rblock.text);
+      if (reviewed && (Array.isArray(reviewed.scenes) || Array.isArray(reviewed.shots))) {
+        if (!reviewed.brief && parsed.brief) reviewed.brief = parsed.brief;  // keep the brief if the editor dropped it
+        parsed = reviewed;
+      }
+    } catch (_) { /* keep the director's plan; the review is a bonus, not a gate */ }
+  }
 
   let scenesOut = null;
   let scene = null;
