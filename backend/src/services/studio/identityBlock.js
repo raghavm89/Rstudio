@@ -59,20 +59,25 @@ const normalise = (text) => String(text || '').replace(/\s+/g, ' ').trim();
  * at once rather than the first one. A form that reveals one rule per submit is
  * a form somebody abandons on the third attempt.
  */
-function validate(text, { name = '' } = {}) {
+function validate(text, { name = '', mode = 'synthetic' } = {}) {
+  const twin = mode === 'twin';
   const identity = normalise(text);
   const errors = [];
   const words = wordCount(identity);
 
   if (!identity) {
-    return { ok: false, words: 0, errors: [{ code: 'EMPTY', message: 'An avatar with no identity block has no face to hold.' }] };
+    // A twin's face is its trained LoRA, so an empty block is fine. A synthetic
+    // avatar has nothing else to hold a face, so it is not.
+    if (twin) return { ok: true, words: 0, errors: [], identity: '' };
+    return { ok: false, words: 0, errors: [{ code: 'EMPTY',
+      message: 'An avatar with no identity block has no face to hold.' }] };
   }
 
   if (words > WORD_MAX) {
     errors.push({ code: 'TOO_LONG', words,
       message: `${words} words; the cap is ${WORD_MAX}. Past that the description dilutes — the model averages the extra detail away and the face drifts.` });
   }
-  if (words < WORD_MIN) {
+  if (!twin && words < WORD_MIN) {
     errors.push({ code: 'TOO_SHORT', words,
       message: `Only ${words} words. Under ${WORD_MIN} there is not enough here to hold one consistent face across hundreds of images.` });
   }
@@ -122,6 +127,12 @@ const FIELDS = [
   { key: 'mark',       label: 'Distinguishing feature', placeholder: 'a small mole below the left eye',
     hint: 'Optional, and the strongest single anchor you can give — one specific asymmetry the model can hold on to.' },
 ];
+
+// A twin's likeness comes from its uploaded footage + trained LoRA, so the text
+// block only supports the shots — origin, skin and face-shape (the anti-drift
+// anchors a SYNTHETIC face needs) are dropped, and the rest are optional.
+const TWIN_KEYS = ['age', 'presenting', 'height', 'build', 'hair', 'eyes', 'mark'];
+const TWIN_FIELDS = TWIN_KEYS.map((k) => ({ ...FIELDS.find((x) => x.key === k), required: false }));
 
 function compose(fields = {}) {
   const get = (k) => normalise(fields[k]);
@@ -174,19 +185,20 @@ function slugify(name = '') {
 const DEFAULT_AVOID = 'extra fingers, deformed hands, plastic skin, waxy skin, over-smoothed, watermark, text';
 
 /** What the browser needs to check as you type, without keeping its own copy. */
-function rules() {
+function rules(mode) {
+  const twin = String(mode || '') === 'twin';
   return {
-    word_min: WORD_MIN,
+    word_min: twin ? 0 : WORD_MIN,
     word_max: WORD_MAX,
     leaked: LEAKED,
     banned: BANNED,
-    fields: FIELDS,
+    fields: twin ? TWIN_FIELDS : FIELDS,
     default_avoid: DEFAULT_AVOID,
     trigger_shape: TRIGGER_SHAPE.source,
   };
 }
 
 module.exports = {
-  WORD_MIN, WORD_MAX, LEAKED, BANNED, FIELDS, DEFAULT_AVOID,
+  WORD_MIN, WORD_MAX, LEAKED, BANNED, FIELDS, TWIN_FIELDS, DEFAULT_AVOID,
   validate, compose, wordCount, normalise, suggestTrigger, slugify, validTrigger, rules,
 };

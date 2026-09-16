@@ -75,6 +75,15 @@ function Body({ d }) {
           </p>
         )}
       </section>
+      <section className="card prof-card">
+        <div className="plan-head"><span className="label">Back office</span></div>
+        <p className="helper" style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <Link className="lnk" href="/admin/consents">Clone consents</Link>
+          <Link className="lnk" href="/admin/catalogue">Catalogue</Link>
+          <Link className="lnk" href="/admin/audit">Audit log</Link>
+          <Link className="lnk" href="/admin/query">Query</Link>
+        </p>
+      </section>
     </>
   );
 }

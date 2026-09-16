@@ -62,10 +62,16 @@ const STILL_W = 880;
 const STILL_H = 1104;
 
 const CENTS_PER_MP = Number(process.env.FAL_PRICE_STILL_CENTS ?? 3.5);
+// Seedance v1 Pro i2v, token-derived per-second cost — the SAME rate the
+// production meter uses (worker/providers/fal.js motionPerSecondCentsByResolution;
+// $2.5/M tokens, ~24 fps). Both env-name spellings are honoured so one override
+// covers this script and the meter.
+const _motionCents = (sec, canonical, dflt) =>
+  Number(process.env[canonical] ?? process.env[sec] ?? dflt);
 const MOTION_CENTS_PER_SECOND = {
-  '480p': Number(process.env.FAL_PRICE_MOTION_480_CENTS ?? 2.4),
-  '720p': Number(process.env.FAL_PRICE_MOTION_720_CENTS ?? 5.4),
-  '1080p': Number(process.env.FAL_PRICE_MOTION_1080_CENTS ?? 12.4),
+  '480p':  _motionCents('FAL_PRICE_MOTION_480_SEC_CENTS',  'FAL_PRICE_MOTION_480_CENTS',  2.4),
+  '720p':  _motionCents('FAL_PRICE_MOTION_720_SEC_CENTS',  'FAL_PRICE_MOTION_720_CENTS',  5.4),
+  '1080p': _motionCents('FAL_PRICE_MOTION_1080_SEC_CENTS', 'FAL_PRICE_MOTION_1080_CENTS', 12.15),
 };
 
 const args = process.argv.slice(2);

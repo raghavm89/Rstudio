@@ -80,7 +80,7 @@ const PromptStage = {
 
       const avatarId = job.payload?.avatar_id;
       const { rows: avatarRows } = await client.query(
-        `SELECT a.id, a.slug, a.identity_block, a.avoid_block, a.subject_type,
+        `SELECT a.id, a.slug, a.identity_block, a.avoid_block, a.subject_type, a.mode,
                 l.id AS lora_id, l.file_path, l.trigger_token, l.base_checkpoint,
                 lp.base_look, lp.lens, lp.colour, lp.grain, lp.skin,
                 lp.natural_asymmetry, lp.hair_detail, lp.vocabulary_version,
@@ -173,7 +173,7 @@ const PromptStage = {
         let built;
         try {
           built = buildWorkflow({
-            avatar: { slug: row.slug, identity_block: row.identity_block, avoid_block: row.avoid_block },
+            avatar: { slug: row.slug, identity_block: row.identity_block, avoid_block: row.avoid_block, mode: row.mode },
             lora: {
               file_path: row.file_path,
               trigger_token: row.trigger_token,

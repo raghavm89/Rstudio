@@ -132,6 +132,31 @@ const Consent = {
   },
 };
 
+/**
+ * insightface reads a still, but a hosted consent capture is a short VIDEO. So
+ * a downloaded file that looks like a video is reduced to one representative
+ * frame first (ffmpeg, ~0.5s in to skip a black first frame). A still URL is
+ * embedded as-is. ffmpeg missing on a video is a clear, non-permanent failure —
+ * the same class as insightface being absent.
+ */
+const { execFile } = require('child_process');
+const VIDEO_RE = /\.(mp4|webm|mov|m4v|mkv|avi)(\?|#|$)/i;
+function videoToStill(inPath) {
+  return new Promise((resolve, reject) => {
+    const out = inPath + '.consent-frame.jpg';
+    execFile('ffmpeg', ['-y', '-ss', '0.5', '-i', inPath, '-frames:v', '1', out],
+      { timeout: 60000 }, (err) => {
+        if (err) {
+          return reject(new ConsentError(
+            'Could not read a frame from the consent video' +
+            (/ENOENT/.test(String(err.message)) ? ' — ffmpeg is not installed on this host' : ''),
+            { status: err && /ENOENT/.test(String(err.message)) ? 503 : 422, code: 'VIDEO_DECODE' }));
+        }
+        resolve(out);
+      });
+  });
+}
+
 /** The real face measurer: download each URL and embed it (insightface). */
 function defaultMeasure(deps) {
   const fetchImpl = deps.fetchImpl || globalThis.fetch;
@@ -141,11 +166,14 @@ function defaultMeasure(deps) {
   }
   return async (url) => {
     const tmp = await downloadToTemp(url, fetchImpl);
+    let still = null;
     try {
-      const m = await embedder.embed(tmp, {});
+      const imagePath = VIDEO_RE.test(String(url)) ? (still = await videoToStill(tmp)) : tmp;
+      const m = await embedder.embed(imagePath, {});
       return Array.isArray(m.embedding) ? m.embedding : null;
     } finally {
       await fs.rm(tmp, { force: true }).catch(() => {});
+      if (still) await fs.rm(still, { force: true }).catch(() => {});
     }
   };
 }

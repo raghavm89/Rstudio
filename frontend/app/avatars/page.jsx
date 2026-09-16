@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useResource, Resource } from '../../components/Guard';
+import { del, errorText } from '../../lib/api';
 
 // Serve stored media through the same-origin proxy (/api/studio/files/... on
 // :3100 → :3000), never the raw absolute URL: on the ngrok stopgap a direct
@@ -39,7 +40,7 @@ export default function Avatars() {
       </div>
 
       <div className="page">
-        <Resource state={state}>{(d) => <List d={d} />}</Resource>
+        <Resource state={state}>{(d) => <List d={d} reload={state.reload} />}</Resource>
       </div>
     </>
   );
@@ -65,7 +66,13 @@ function NewButton({ state, onClick }) {
   return <button className="btn sm ghost" onClick={onClick}>New avatar</button>;
 }
 
-function List({ d }) {
+async function deleteAvatar(a, reload) {
+  if (!window.confirm(`Delete "${a.name}"? This removes the avatar and everything under it, and cannot be undone.`)) return;
+  try { await del(`/avatars/${a.id}`); reload?.(); }
+  catch (e) { window.alert(errorText(e, 'Could not delete the avatar.')); }
+}
+
+function List({ d, reload }) {
   if (!d.avatars.length) {
     return (
       <div className="empty">
@@ -105,12 +112,18 @@ function List({ d }) {
                  generated and paid for. */
               <p className="helper av-consent">
                 A twin depicts a real person. Training needs a verified consent
-                record, which is not built yet.
+                record. <Link href={`/avatars/${a.id}/clone`}>Capture consent →</Link>
               </p>
             )}
 
             <div className="av-foot">
               <span className="helper">{progress(a)}</span>
+              {!a.is_catalogue && (
+                <button type="button" className="btn sm ghost av-del"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteAvatar(a, reload); }}>
+                  Delete
+                </button>
+              )}
             </div>
           </Link>
         ))}

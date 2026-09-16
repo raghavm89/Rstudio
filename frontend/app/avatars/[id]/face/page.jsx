@@ -494,7 +494,164 @@ function Cull({ avatarId, initial, reload }) {
  * is a hundred megapixels. A button that spends someone's month without saying
  * so first is a button they find out about on an invoice.
  */
+function sameOriginUpload(url) {
+  try { const u = new URL(url, window.location.origin); return u.pathname.startsWith('/api/studio/') ? u.pathname + u.search : url; } catch { return url; }
+}
+
+function TwinSetup({ avatarId, onDone }) {
+  const [state, setState] = useState('idle');   // idle | uploading | processing | error
+  const [msg, setMsg] = useState(null);
+  const fileRef = useRef(null);
+  const pollRef = useRef(null);
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
+  function startPoll() {
+    pollRef.current = setInterval(async () => {
+      try {
+        const st = await get(`/avatars/${avatarId}/twin-status`);
+        if (st.state === 'processing') setMsg(st.message || 'Processing…');
+        else if (st.state === 'done') { clearInterval(pollRef.current); onDone && onDone(); }
+        else if (st.state === 'error') { clearInterval(pollRef.current); setState('error'); setMsg(st.message || 'Could not process the footage'); }
+      } catch { /* keep polling */ }
+    }, 2500);
+  }
+
+  async function process(body, startMsg) {
+    setState('processing'); setMsg(startMsg);
+    try {
+      await post(`/avatars/${avatarId}/twin-material`, body);
+      startPoll();
+    } catch (err) {
+      setState('error'); setMsg(errorText(err, 'Could not start processing.'));
+    }
+  }
+
+  async function onPick(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setState('uploading'); setMsg('Uploading your footage…');
+    try {
+      const target = await post(`/avatars/${avatarId}/upload-target`, {
+        filename: file.name || 'footage.mp4', contentType: file.type || 'video/mp4', kind: 'footage',
+      });
+      const put = await fetch(sameOriginUpload(target.url), { method: 'PUT', headers: target.headers || {}, body: file });
+      if (!put.ok) throw new Error(`Upload failed (HTTP ${put.status})`);
+      await process({ video_key: target.key }, 'Processing your footage…');
+    } catch (err) {
+      setState('error'); setMsg(errorText(err, 'Could not upload the footage.'));
+    }
+  }
+
+  const busy = state === 'uploading' || state === 'processing';
+  return (
+    <div className="card prof-card" style={{ textAlign: 'left', maxWidth: 640, margin: '18px auto 0' }}>
+      <div className="label">Two steps</div>
+      <ol className="helper" style={{ paddingLeft: 18, lineHeight: 1.8 }}>
+        <li><b>Consent</b> — <Link className="lnk" href={`/avatars/${avatarId}/clone`}>record it on the clone page →</Link></li>
+        <li><b>Give it footage to learn from.</b> Upload a video of yourself — ideally a minute of varied,
+          front-facing footage (a few angles, distances and expressions) for the best likeness. We check it
+          matches your consent video, then build the training set from it.</li>
+      </ol>
+
+      <div className="label" style={{ marginTop: 14 }}>For the best likeness, film</div>
+      <ul className="helper" style={{ paddingLeft: 18, lineHeight: 1.75, marginTop: 4 }}>
+        <li><b>60–90 seconds</b> in good, even light — face a window; avoid backlight and harsh shadows.</li>
+        <li><b>Several angles</b> — slowly turn your head: straight on, then left, then right.</li>
+        <li><b>A mix of distances</b> — some close (face fills the frame), some at arm&rsquo;s length (head and shoulders).</li>
+        <li><b>A few natural expressions</b> — neutral, a smile, talking.</li>
+        <li><b>A clear face</b> — hair back, no sunglasses, hat or mask; in focus and steady.</li>
+        <li><b>Just you</b> in frame, in the look you want the twin to have — whatever it sees (glasses, hair, outfit) is what it learns.</li>
+        <li>Avoid beauty filters, heavy makeup, motion blur and dark rooms.</li>
+      </ul>
+
+      <input ref={fileRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={onPick} />
+      <div className="btn-row" style={{ marginTop: 12, gap: 10, display: 'flex', flexWrap: 'wrap' }}>
+        <Link className="btn sm ghost" href={`/avatars/${avatarId}/clone`}>Capture consent</Link>
+        <button type="button" className="btn sm" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>
+          {busy ? 'Working…' : 'Upload footage'}
+        </button>
+        <button type="button" className="btn sm ghost" disabled={busy}
+          onClick={() => process({ use_consent: true }, 'Building a basic twin from your consent video…')}>
+          Use my consent video
+        </button>
+      </div>
+      <p className="helper" style={{ marginTop: 8 }}>
+        &ldquo;Use my consent video&rdquo; is the quick path — it trains a basic twin from that single clip.
+        A longer, varied video makes a noticeably better one.
+      </p>
+      {state === 'error'
+        ? <p className="lp-msg warn" style={{ marginTop: 10 }}>{msg}</p>
+        : msg && <p className="helper adm-ok" style={{ marginTop: 10 }}>{msg}</p>}
+
+      <VoiceClone avatarId={avatarId} />
+    </div>
+  );
+}
+
+/**
+ * Clone the twin's VOICE from its consent video (owned, local IndicF5).
+ *
+ * The consent video is the person reading the consent statement aloud, so it
+ * doubles as a clean voice reference. One click extracts that audio and locks
+ * the avatar's voice to it — used later for voiceover shoots. Needs a VERIFIED
+ * consent record; the backend enforces that and says so if it is missing.
+ */
+function VoiceClone({ avatarId }) {
+  const [state, setState] = useState('idle');   // idle | working | done | error
+  const [msg, setMsg] = useState(null);
+  async function run() {
+    setState('working'); setMsg('Cloning your voice from the consent video…');
+    try {
+      await post(`/avatars/${avatarId}/voice/clone`, {});
+      setState('done'); setMsg('Voice cloned. Voiceover shoots will now speak in your own voice.');
+    } catch (err) {
+      setState('error'); setMsg(errorText(err, 'Could not clone the voice.'));
+    }
+  }
+  return (
+    <div style={{ marginTop: 16, borderTop: '1px solid var(--hair, #e6e2da)', paddingTop: 14 }}>
+      <div className="label">Optional · Clone your voice</div>
+      <p className="helper">
+        Your consent video is you reading a statement aloud, so we can clone your voice straight from it.
+        The clone stays on this machine and gives your twin its own voice for voiceovers.
+        Verify the consent first (the admin approves it, or the same-person check passes at ingest).
+      </p>
+      <div className="btn-row" style={{ marginTop: 10 }}>
+        <button type="button" className="btn sm" disabled={state === 'working' || state === 'done'} onClick={run}>
+          {state === 'working' ? 'Cloning…' : state === 'done' ? 'Voice cloned ✓' : 'Clone my voice'}
+        </button>
+      </div>
+      {state === 'error'
+        ? <p className="lp-msg warn" style={{ marginTop: 10 }}>{msg}</p>
+        : msg && <p className="helper adm-ok" style={{ marginTop: 10 }}>{msg}</p>}
+    </div>
+  );
+}
+
 function NoFrames({ avatarId, avatar, framesPresent, onQueued, anchored }) {
+  // A twin does not GENERATE faces — its training photos come from the person's
+  // own footage. So the empty state is a setup panel, not a generate button.
+  if (avatar.mode === 'twin') {
+    return (
+      <>
+        <div className="topbar">
+          <div className="crumb"><b>{avatar.name}</b><span>·</span><span>Set up your twin</span></div>
+          <Steps current="face" avatarId={avatarId} />
+        </div>
+        <div className="page">
+          <div className="empty face-empty">
+            <h2>Set up your twin</h2>
+            <p>{avatar.name} is a digital twin, so its photos come from a video of the
+              real person — nothing is generated. Consent, then ingest your footage,
+              and this screen fills with frames to cull.</p>
+            <TwinSetup avatarId={avatarId} onDone={onQueued} />
+            <p className="helper"><Link className="lnk" href="/avatars">Back to avatars</Link></p>
+          </div>
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <div className="topbar">

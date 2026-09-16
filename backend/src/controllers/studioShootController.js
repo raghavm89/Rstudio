@@ -190,6 +190,7 @@ exports.list = async (req, res) => {
     `SELECT p.id, p.title, p.kind, p.slot_type, p.created_at,
             a.name AS avatar_name,
             CASE
+              WHEN p.status = 'discarded' THEN 'discarded'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status IN ('queued','claimed','running')) THEN 'generating'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'held') THEN 'review'
               WHEN EXISTS (SELECT 1 FROM render_jobs j WHERE j.project_id = p.id AND j.status = 'failed') THEN 'failed'
@@ -554,6 +555,26 @@ exports.replan = async (req, res) => {
     if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
     throw err;
   }
+};
+
+exports.discard = async (req, res) => {
+  const tenantId = req.user.tenant_id;
+  if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
+  const projectId = Number(req.params.id);
+  try {
+    const result = await Orchestrator.discard({ tenantId, projectId, userId: req.user.id });
+    return res.status(200).json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+    throw err;
+  }
+};
+
+// The stills-per-scene ceiling for THIS session's tier — the create page reads it
+// so the slider can't offer more than the tier allows (the server clamps too).
+exports.limits = async (req, res) => {
+  const tier = req.user.plan_id ? 'paid' : 'free';
+  return res.json({ tier, candidate_max: Orchestrator.candidateMaxForTier(tier) });
 };
 
 exports.transcribe = async (req, res) => {

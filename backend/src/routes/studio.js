@@ -119,6 +119,8 @@ adminRouter.get ('/jobs',                asyncHandler(admin.jobs));
 adminRouter.post('/jobs/:id/requeue',    parseId('id'), asyncHandler(admin.requeueJob));
 adminRouter.post('/query',               asyncHandler(admin.query));
 adminRouter.get ('/audit',               asyncHandler(admin.auditLog));
+adminRouter.get   ('/consents',          asyncHandler(admin.listConsents));
+adminRouter.post  ('/consents/:id/approve', parseId('id'), asyncHandler(admin.approveConsent));
 adminRouter.get   ('/catalogue',         asyncHandler(admin.listCatalogue));
 adminRouter.post  ('/catalogue',         asyncHandler(admin.addCatalogue));
 adminRouter.delete('/catalogue/:id',     parseId('id'), asyncHandler(admin.removeCatalogue));
@@ -138,6 +140,8 @@ router.post('/shoots/:id/select-still', authorize(...TENANT_ROLES), parseId('id'
 router.post('/shoots/:id/reanimate',    authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.reanimate));
 router.post('/shoots/:id/regenerate-stills', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.regenerateStills));
 router.post('/shoots/:id/replan',      authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.replan));
+router.post('/shoots/:id/discard',     authorize(...TENANT_ROLES), parseId('id'), asyncHandler(shootCtrl.discard));
+router.get ('/limits',                 authorize(...TENANT_ROLES), asyncHandler(shootCtrl.limits));
 
 // The persona list, and making one.
 //
@@ -173,6 +177,11 @@ router.get ('/avatars/:id',   authorize(...TENANT_ROLES), parseId('id'), asyncHa
 
 // Clone consent — create a record for a twin, and verify it is the same person.
 const consentCtrl = require('../controllers/studioConsentController');
+router.post('/avatars/:id/upload-target', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.uploadTarget));
+router.post('/avatars/:id/twin-material', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.twinMaterial));
+router.get ('/avatars/:id/twin-status',   authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.twinStatus));
+router.post('/avatars/:id/voice/clone',    authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.voiceClone));
+router.delete('/avatars/:id', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.remove));
 router.post('/avatars/:id/consent', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(consentCtrl.create));
 router.post('/consent/:id/verify',  authorize(...TENANT_ROLES), parseId('id'), asyncHandler(consentCtrl.verify));
 

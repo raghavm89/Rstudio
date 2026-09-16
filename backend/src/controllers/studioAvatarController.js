@@ -140,7 +140,7 @@ exports.get = async (req, res) => {
 // these lists; the POST below re-checks with the same module and is the
 // authority. A copy of the word lists in JavaScript would be a copy that stops
 // matching the day someone adds a word here.
-exports.identityRules = async (_req, res) => res.json(Identity.rules());
+exports.identityRules = async (req, res) => res.json(Identity.rules(req.query.mode));
 
 /**
  * POST /api/studio/avatars — create a persona.
@@ -212,7 +212,7 @@ exports.create = async (req, res) => {
   const identity = Identity.normalise(
     body.identity_block || Identity.compose(body.identity_fields || {})
   );
-  const check = Identity.validate(identity, { name });
+  const check = Identity.validate(identity, { name, mode });
   if (!check.ok) {
     return res.status(400).json({
       error: 'The identity block will not do',
@@ -374,7 +374,9 @@ exports.create = async (req, res) => {
       // Said on the way out rather than discovered at the train button.
       consent_required: mode !== 'synthetic',
       generation,
-      next: `/avatars/${avatar.id}/face`,
+      // A twin cannot generate or train until consent is verified, so send it
+      // there first; a synthetic avatar goes straight to its faces.
+      next: mode !== 'synthetic' ? `/avatars/${avatar.id}/clone` : `/avatars/${avatar.id}/face`,
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -607,5 +609,226 @@ exports.updateLook = async (req, res) => {
     res.json(await LookProfile.update(req.user.tenant_id, Number(req.params.id), req.body || {}));
   } catch (err) {
     return fail(res, err);
+  }
+};
+
+/**
+ * POST /avatars/:id/upload-target — a presigned PUT for a client-uploaded file
+ * on this avatar (a consent video, a reference photo). The signed-in user's
+ * counterpart to the worker's `/jobs/:id/upload-target`: the browser uploads
+ * straight to storage under a tenant-scoped key, and no route ever buffers the
+ * bytes. Restricted to image/video, which is all this flow legitimately sends.
+ */
+exports.uploadTarget = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { filename, contentType, kind = 'consent' } = req.body || {};
+  if (!filename || !contentType) {
+    return res.status(400).json({ error: 'filename and contentType are required', code: 'BAD_UPLOAD' });
+  }
+  if (!/^(video|image)\//.test(String(contentType))) {
+    return res.status(415).json({ error: 'Only image or video uploads are allowed here', code: 'BAD_CONTENT_TYPE' });
+  }
+  if (!['consent', 'reference', 'footage'].includes(kind)) {
+    return res.status(400).json({ error: 'kind must be consent, reference or footage', code: 'BAD_KIND' });
+  }
+  const { rows } = await pool.query(
+    'SELECT slug, mode FROM avatars WHERE id = $1 AND tenant_id = $2', [avatarId, req.user.tenant_id]);
+  if (!rows[0]) return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' });
+  if (rows[0].mode === 'synthetic') {
+    return res.status(409).json({ error: 'A synthetic avatar has no consent material to upload', code: 'NOT_A_TWIN' });
+  }
+
+  const { createStorage } = require('../services/studio/storageFactory');
+  const target = createStorage().uploadTarget({
+    tenantId:   req.user.tenant_id,
+    avatarSlug: rows[0].slug,
+    projectId:  kind === 'footage' ? 'twin-footage' : 'consent',
+    kind,
+    filename,
+    contentType,
+  });
+  // `public_url` is what the verifier and (later) the record store; the browser
+  // PUTs to `url`.
+  return res.json(target);
+};
+
+
+/**
+ * DELETE /avatars/:id — remove a user-created avatar and everything under it.
+ *
+ * Tenant-scoped, so one workspace can never delete another's. A shared catalogue
+ * avatar is refused — it is not this tenant's to remove. Children (seed
+ * candidates, LoRAs, jobs, look profile) go with it via ON DELETE CASCADE.
+ */
+exports.remove = async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows } = await pool.query(
+    'SELECT id, is_catalogue FROM avatars WHERE id = $1 AND tenant_id = $2',
+    [id, req.user.tenant_id]);
+  if (!rows[0]) return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' });
+  if (rows[0].is_catalogue) {
+    return res.status(409).json({ error: 'A shared catalogue avatar cannot be deleted here', code: 'IS_CATALOGUE' });
+  }
+  await pool.query('DELETE FROM avatars WHERE id = $1 AND tenant_id = $2', [id, req.user.tenant_id]);
+  return res.status(204).end();
+};
+
+
+/**
+ * In-app twin ingest. The browser uploads footage via /upload-target (kind
+ * "footage"), then POSTs the key here. We resolve it to a local file and run
+ * the shared ingest in the background (the API host has ffmpeg + insightface),
+ * tracking progress in memory for the twin screen to poll. No CLI, no operator.
+ */
+const _twinStatus = new Map(); // avatarId -> { state, message, kept?, matchScore? }
+
+exports.twinMaterial = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { video_key, use_consent } = req.body || {};
+  if (!video_key && !use_consent) return res.status(400).json({ error: 'video_key or use_consent is required', code: 'NO_KEY' });
+
+  const { rows } = await pool.query(
+    'SELECT id, slug, mode, consent_record_id FROM avatars WHERE id = $1 AND tenant_id = $2',
+    [avatarId, req.user.tenant_id]);
+  const av = rows[0];
+  if (!av) return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' });
+  if (av.mode === 'synthetic') return res.status(409).json({ error: 'A synthetic avatar has no footage to ingest', code: 'NOT_A_TWIN' });
+  if (!av.consent_record_id) return res.status(409).json({ error: 'Capture consent first', code: 'NO_CONSENT' });
+
+  const fs = require('fs'); const os = require('os'); const path = require('path');
+  const { createStorage } = require('../services/studio/storageFactory');
+  const storage = createStorage();
+  let sourcePath; let cleanup = null;
+  try {
+    if (use_consent) {
+      // Reuse the consent video as the training footage (convenience; a single
+      // static clip trains a basic twin — richer footage is better).
+      const { rows: cr } = await pool.query('SELECT video_url FROM consent_records WHERE id = $1', [av.consent_record_id]);
+      const url = cr[0] && cr[0].video_url;
+      if (!url) return res.status(409).json({ error: 'No consent video to use', code: 'NO_CONSENT_VIDEO' });
+      const tmp = path.join(os.tmpdir(), `twin-src-${Date.now()}`);
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`download ${r.status}`);
+      fs.writeFileSync(tmp, Buffer.from(await r.arrayBuffer()));
+      sourcePath = tmp; cleanup = () => { try { fs.unlinkSync(tmp); } catch { /* leave it */ } };
+    } else if (typeof storage.pathFor === 'function') {
+      sourcePath = storage.pathFor(video_key);
+      if (!fs.existsSync(sourcePath)) throw new Error('missing');
+    } else {
+      const tmp = path.join(os.tmpdir(), `twin-src-${Date.now()}`);
+      const r = await fetch(storage.readUrl(video_key));
+      if (!r.ok) throw new Error(`download ${r.status}`);
+      fs.writeFileSync(tmp, Buffer.from(await r.arrayBuffer()));
+      sourcePath = tmp; cleanup = () => { try { fs.unlinkSync(tmp); } catch { /* leave it */ } };
+    }
+  } catch {
+    return res.status(400).json({ error: 'Could not read the footage source', code: 'NO_SOURCE' });
+  }
+
+  _twinStatus.set(avatarId, { state: 'processing', message: 'Processing your footage…' });
+  res.status(202).json({ ok: true });
+
+  const TwinIngest = require('../services/studio/twinIngest');
+  TwinIngest.ingest({
+    avatarId, tenantId: req.user.tenant_id, sourcePath, isVideo: true,
+    onProgress: (m) => _twinStatus.set(avatarId, { state: 'processing', message: m }),
+  })
+    .then((r) => _twinStatus.set(avatarId, { state: 'done', kept: r.kept, matchScore: r.matchScore }))
+    .catch((err) => _twinStatus.set(avatarId, { state: 'error', message: err.message || 'Could not process the footage' }))
+    .finally(() => { if (cleanup) cleanup(); });
+};
+
+exports.twinStatus = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { rows } = await pool.query('SELECT 1 FROM avatars WHERE id = $1 AND tenant_id = $2', [avatarId, req.user.tenant_id]);
+  if (!rows[0]) return res.status(404).json({ error: 'No such avatar', code: 'NO_AVATAR' });
+  return res.json(_twinStatus.get(avatarId) || { state: 'idle' });
+};
+
+
+/**
+ * POST /avatars/:id/voice/clone — build the OWNED voice clone from consent.
+ *
+ * A twin's consent video is the person reading the fixed consent statement
+ * aloud, which makes it a clean reference recording whose transcript we already
+ * know. That is exactly what IndicF5 zero-shot cloning needs, so cloning is:
+ * pull the audio out of the consent video, store it as the voice reference, and
+ * lock the avatar to `voice_provider='indicf5'` with a voice_id that carries the
+ * reference key + its transcript. Nothing leaves the machine.
+ *
+ * Gated on a VERIFIED consent record — a real person's voice is biometric, so we
+ * do not clone it until consent is on the record and confirmed to be them.
+ */
+exports.voiceClone = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { rows } = await pool.query(
+    'SELECT id, slug, mode, consent_record_id FROM avatars WHERE id = $1 AND tenant_id = $2',
+    [avatarId, req.user.tenant_id]);
+  const av = rows[0];
+  if (!av) return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' });
+  if (av.mode === 'synthetic') return res.status(409).json({ error: 'A synthetic avatar has no real voice to clone', code: 'NOT_A_TWIN' });
+  if (!av.consent_record_id) return res.status(409).json({ error: 'Capture consent first', code: 'NO_CONSENT' });
+
+  const { rows: cr } = await pool.query(
+    'SELECT video_url, verified, statement_language FROM consent_records WHERE id = $1', [av.consent_record_id]);
+  const rec = cr[0];
+  if (!rec || !rec.video_url) return res.status(409).json({ error: 'No consent video to clone from', code: 'NO_CONSENT_VIDEO' });
+  if (!rec.verified) return res.status(409).json({ error: 'Consent must be verified before cloning a voice', code: 'CONSENT_UNVERIFIED' });
+
+  const fs = require('fs'); const os = require('os'); const path = require('path');
+  const { promisify } = require('util');
+  const execFile = promisify(require('child_process').execFile);
+  const { CONSENT_STATEMENT } = require('../services/studio/consentStatement');
+  const { createStorage } = require('../services/studio/storageFactory');
+  const storage = createStorage();
+
+  const stamp = `${avatarId}-${Date.now()}`;
+  const srcPath = path.join(os.tmpdir(), `voice-src-${stamp}`);
+  const wavPath = path.join(os.tmpdir(), `voice-ref-${stamp}.wav`);
+  const cleanup = () => { for (const p of [srcPath, wavPath]) { try { fs.unlinkSync(p); } catch { /* leave it */ } } };
+
+  try {
+    // 1. bring the consent video local
+    const r = await fetch(rec.video_url);
+    if (!r.ok) throw Object.assign(new Error('download'), { _status: 502, _code: 'NO_SOURCE', _msg: 'Could not read the consent video' });
+    fs.writeFileSync(srcPath, Buffer.from(await r.arrayBuffer()));
+
+    // 2. pull the audio out — mono 24 kHz wav, the reference IndicF5 wants
+    try {
+      await execFile(process.env.FFMPEG_PATH || 'ffmpeg',
+        ['-y', '-i', srcPath, '-vn', '-ac', '1', '-ar', '24000', wavPath]);
+    } catch (e) {
+      throw Object.assign(new Error('ffmpeg'), { _status: 500, _code: 'FFMPEG_FAILED', _msg: 'Could not extract audio from the consent video' });
+    }
+    const buffer = fs.readFileSync(wavPath);
+    if (!buffer.length) throw Object.assign(new Error('empty'), { _status: 500, _code: 'EMPTY_AUDIO', _msg: 'The consent video had no usable audio' });
+
+    // 3. store it as the voice reference
+    const target = storage.uploadTarget({
+      tenantId: req.user.tenant_id, avatarSlug: av.slug, projectId: 'voice-ref',
+      kind: 'voice', filename: 'voice-ref.wav', contentType: 'audio/wav',
+    });
+    if (typeof storage.put === 'function') {
+      const q = new URLSearchParams(target.url.slice(target.url.indexOf('?') + 1));
+      storage.put(target.key, { contentType: q.get('ct'), expiresAt: q.get('exp'), signature: q.get('sig'), body: buffer });
+    } else {
+      const put = await fetch(target.url, { method: 'PUT', headers: { ...(target.headers || {}), 'Content-Length': String(buffer.length) }, body: buffer });
+      if (!put.ok) throw Object.assign(new Error('store'), { _status: 502, _code: 'STORE_FAILED', _msg: 'Could not store the voice reference' });
+    }
+
+    // 4. lock the voice on the avatar. Reference text = the statement they read;
+    //    lang hint defaults to Hindi (Indic zero-shot handles an English reference).
+    const lang = 'hi';
+    const voiceId = JSON.stringify({ ref_key: target.key, ref_text: CONSENT_STATEMENT, lang });
+    await pool.query(
+      "UPDATE avatars SET voice_provider = 'indicf5', voice_id = $2, updated_at = NOW() WHERE id = $1 AND tenant_id = $3",
+      [avatarId, voiceId, req.user.tenant_id]);
+
+    return res.json({ ok: true, voice_provider: 'indicf5', ref_key: target.key, bytes: buffer.length });
+  } catch (e) {
+    if (e && e._status) return res.status(e._status).json({ error: e._msg, code: e._code });
+    throw e;
+  } finally {
+    cleanup();
   }
 };

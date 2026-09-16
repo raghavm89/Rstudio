@@ -75,12 +75,20 @@ function Detail({ data, onApprove, onRefresh }) {
   const done = pr.status === "done";
   const failed = pr.status === "failed";
   const review = pr.status === "review";
+  const discarded = pr.status === "discarded";
   const [approving, setApproving] = useState(false);
-  const statusText = failed ? "Failed" : done ? "Done" : review ? "Ready to review" : "Generating";
-  const statusColor = failed ? "#b04a4a" : done ? "#2f7d4f" : review ? "#5b3df5" : "#8a7d3a";
+  const statusText = discarded ? "Discarded" : failed ? "Failed" : done ? "Done" : review ? "Ready to review" : "Generating";
+  const statusColor = discarded ? "#8a8577" : failed ? "#b04a4a" : done ? "#2f7d4f" : review ? "#5b3df5" : "#8a7d3a";
   async function doApprove() { setApproving(true); try { await onApprove(); } catch (_) {} finally { setApproving(false); } }
   const [regenning, setRegenning] = useState(false);
   const [regenErr, setRegenErr] = useState(null);
+  const [discarding, setDiscarding] = useState(false);
+  async function doDiscard() {
+    if (!window.confirm("Discard this shoot? The held motion, voice and assembly are cancelled and the credits they reserved are returned. Rendered stills stay. This can't be undone.")) return;
+    setDiscarding(true);
+    try { await post(`/shoots/${p.id}/discard`); if (onRefresh) await onRefresh(); }
+    catch (e) { setRegenErr(String((e && e.message) || e)); } finally { setDiscarding(false); }
+  }
   async function regen() {
     setRegenErr(null); setRegenning(true);
     try { await post(`/shoots/${p.id}/regenerate-stills`); if (onRefresh) await onRefresh(); }
@@ -152,9 +160,17 @@ function Detail({ data, onApprove, onRefresh }) {
             <button className="btn" disabled={approving || regenning} onClick={doApprove}>{approving ? "Releasing…" : "Approve & animate →"}</button>
             <button className="btn ghost" disabled={approving || regenning} onClick={regen} title="Render a fresh set of stills to pick from — new frames, same plan.">{regenning ? "Reshooting…" : "↻ Regenerate stills"}</button>
             {p.avatar_id ? <Link className="btn ghost" href={`/avatars/${p.avatar_id}/create?from=${p.id}`}>✎ Edit the plan</Link> : null}
+            <button className="btn ghost" disabled={approving || regenning || discarding} onClick={doDiscard} title="Drop this shoot and return the credits reserved for the un-run motion, voice and assembly.">{discarding ? "Discarding…" : "🗑 Discard shoot"}</button>
           </div>
           {regenErr ? <div className="load-err" style={{ marginTop: 8 }}><span>{regenErr}</span></div> : null}
           <p style={S.rejectHint}>Not right? <b>Regenerate</b> reshoots the frames with the same plan; <b>Edit the plan</b> reopens these scenes to change and reshoot this same shoot.</p>
+        </div>
+      )}
+
+      {discarded && (
+        <div style={S.reviewBox}>
+          <div style={S.reviewHead}>Shoot discarded</div>
+          <div style={S.reviewMsg}>Dropped at the review gate — the un-run motion, voice and assembly were cancelled and their reserved credits returned. Any stills already rendered stayed. Start a new shoot from your avatar when you're ready.</div>
         </div>
       )}
 

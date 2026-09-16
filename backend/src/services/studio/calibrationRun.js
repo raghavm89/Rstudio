@@ -151,7 +151,7 @@ async function context(client, tenantId, loraId) {
   const { rows } = await client.query(
     `SELECT l.id AS lora_id, l.version, l.active, l.file_path, l.trigger_token,
             l.base_checkpoint, l.face_embedding_mean,
-            a.id AS avatar_id, a.slug, a.identity_block, a.avoid_block,
+            a.id AS avatar_id, a.slug, a.identity_block, a.avoid_block, a.mode,
             lp.base_look, lp.lens, lp.colour, lp.grain, lp.skin,
             lp.natural_asymmetry, lp.hair_detail, lp.vocabulary_version
        FROM avatar_loras l
@@ -234,13 +234,21 @@ async function preview(tenantId, loraId, { framings = ['medium'], samples = DEFA
  * One transaction, because a half-queued plan measures a subset and then
  * reports a baseline as though it had measured the whole thing.
  */
-async function submit(tenantId, loraId, { userId = null, framings = ['medium'], samples = DEFAULT_SAMPLES, ip = null } = {}) {
+async function submit(tenantId, loraId, { userId = null, framings = ['medium'], samples = DEFAULT_SAMPLES, ip = null, allowActive = false } = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const row = await context(client, tenantId, loraId);
-    if (row.active) {
+    // An ACTIVE model normally refuses recalibration: changing a baseline under
+    // published work would move the gate the work was judged by. `allowActive`
+    // is the operator exception, and it is only safe because of WHAT this queues
+    // — cells that have NO baseline yet (a framing never measured). Those add
+    // coverage without touching an existing baseline, and faceQc floors at
+    // Math.min(calibratedFloor, IDENTITY_FLOOR), so a newly-calibrated framing
+    // can only ever LOOSEN or hold the gate, never tighten it below what
+    // published work already faced. The `have`-skip below keeps it additive.
+    if (row.active && !allowActive) {
       throw new Calibration.CalibrationError(
         'This model is already in use — calibrating it again would change the gate under work already published.',
         { status: 409, code: 'ALREADY_ACTIVE' }
@@ -348,7 +356,7 @@ async function submit(tenantId, loraId, { userId = null, framings = ['medium'], 
       let prompt;
       try {
         prompt = assemblePrompt({
-          avatar: { slug: row.slug, identity_block: row.identity_block, avoid_block: row.avoid_block },
+          avatar: { slug: row.slug, identity_block: row.identity_block, avoid_block: row.avoid_block, mode: row.mode },
           lora: { trigger_token: row.trigger_token },
           lookProfile: {
             base_look: row.base_look, lens: row.lens, colour: row.colour,

@@ -531,7 +531,7 @@ async function consentRefusal(avatar) {
   return {
     error: 'This avatar needs a verified consent record first',
     message: 'A twin depicts a real person, so the material used to train it needs recorded '
-           + 'consent from that person. The capture flow is not built yet.',
+           + 'consent from that person. Capture it on the clone page for this avatar.',
     code: 'CONSENT_REQUIRED',
   };
 }

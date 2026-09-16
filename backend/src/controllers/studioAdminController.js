@@ -563,7 +563,38 @@ async function removeCatalogue(req, res) {
   } finally { client.release(); }
 }
 
+
+// ── Clone consent review (admin back office) ────────────────────────────────
+// Twin consents and their verification state, across all tenants. Approving one
+// marks it verified (a human review path alongside the automated footage match).
+async function listConsents(_req, res) {
+  const { rows } = await pool.query(
+    `SELECT a.id AS avatar_id, a.name AS avatar_name, a.slug, a.tenant_id,
+            c.id AS consent_id, c.subject_name, c.verified, c.match_score,
+            c.video_url, c.created_at, c.verified_at
+       FROM avatars a
+       JOIN consent_records c ON c.id = a.consent_record_id
+      WHERE a.mode <> 'synthetic'
+      ORDER BY c.verified ASC, c.created_at DESC
+      LIMIT 200`);
+  res.json({ consents: rows });
+}
+
+async function approveConsent(req, res) {
+  const avatarId = Number(req.params.id);
+  const { rows } = await pool.query('SELECT consent_record_id, mode FROM avatars WHERE id = $1', [avatarId]);
+  const av = rows[0];
+  if (!av) return res.status(404).json({ error: 'No such avatar', code: 'NO_AVATAR' });
+  if (av.mode === 'synthetic') return res.status(409).json({ error: 'A synthetic avatar needs no consent', code: 'NOT_A_TWIN' });
+  if (!av.consent_record_id) return res.status(409).json({ error: 'No consent recorded yet', code: 'NO_RECORD' });
+  await pool.query(
+    `UPDATE consent_records SET verified = TRUE, verified_at = COALESCE(verified_at, NOW()), verified_by = $2 WHERE id = $1`,
+    [av.consent_record_id, req.user.id]);
+  res.json({ verified: true });
+}
+
 module.exports = {
   overview, listTenants, getTenant, money, jobs, requeueJob, grantCredits, query, auditLog,
   listCatalogue, addCatalogue, removeCatalogue,
+  listConsents, approveConsent,
 };

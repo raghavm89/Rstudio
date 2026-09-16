@@ -54,10 +54,19 @@ function Idea({ avatarId }) {
   const [clip, setClip] = useState(5);
   const [beats, setBeats] = useState(3);   // reel = a storyboard of N beats, stitched
   const [stills, setStills] = useState(4);  // candidate frames rendered per scene to pick from
+  const [stillsMax, setStillsMax] = useState(6);  // ceiling from the plan tier (server clamps too)
   const [plan, setPlan] = useState(null);   // the reviewable storyboard, before generating
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [recording, setRecording] = useState(false);
+
+  // The stills-per-scene ceiling depends on the plan tier — ask the server so the
+  // slider can't offer more than the tier allows (the server clamps regardless).
+  useEffect(() => {
+    get("/limits").then((r) => {
+      if (r && r.candidate_max) { setStillsMax(r.candidate_max); setStills((v) => Math.min(v, r.candidate_max)); }
+    }).catch(() => {});
+  }, []);
   const [transcribing, setTranscribing] = useState(false);
   const [loadingFrom, setLoadingFrom] = useState(false);
 
@@ -187,8 +196,8 @@ function Idea({ avatarId }) {
             </label>
             <label style={S.clip}>
               <span style={S.ctlLbl}>Stills</span>
-              <input type="range" min={1} max={6} value={stills} onChange={(e) => setStills(Number(e.target.value))} />
-              <span style={S.clipVal}>{stills}</span>
+              <input type="range" min={1} max={stillsMax} value={stills} onChange={(e) => setStills(Number(e.target.value))} />
+              <span style={S.clipVal}>{stills}</span>{stillsMax < 6 ? <span style={{ fontSize: 11, color: "#8a8577", marginLeft: 8 }}>max {stillsMax} on your plan</span> : null}
             </label>
             <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} scenes` : ""} · {stills} still{stills === 1 ? "" : "s"}/scene</span>
           </div>

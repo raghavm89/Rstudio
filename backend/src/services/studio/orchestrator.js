@@ -5,6 +5,7 @@ const RenderJob    = require('../../models/renderJob');
 const StudioUsage  = require('../../models/studioUsage');
 const RunnerPolicy = require('./runnerPolicy');
 const { creditCostFor } = require('./creditCost');
+const { METERED } = require('./jobResult');
 
 /**
  * The one click.
@@ -33,6 +34,11 @@ const QUALITY_BY_PLAN = { free: '1mp', paid: '2mp' };
 
 /** Free tier gets one candidate; paid gets four and picks the best by QC score. */
 const CANDIDATES = { free: 1, paid: 4 };
+// Ceiling on the create-page stills-per-scene control, by tier — free previews a
+// small pool, paid can go wider. Tier-aware so a free session can't spend a
+// paid-sized pool per beat.
+const CANDIDATE_MAX_BY_TIER = { free: 2, paid: 6 };
+function candidateMaxForTier(tier) { return CANDIDATE_MAX_BY_TIER[tier] || CANDIDATE_MAX_BY_TIER.free; }
 
 const SECONDS_PER_CLIP = 5;
 
@@ -284,7 +290,7 @@ const Orchestrator = {
     // Candidates per shot: the pool of still frames rendered for each beat, from
     // which QC (and the human, at Gate 2) pick the best. Defaults by tier; a
     // create-page control may raise or lower it, clamped so cost stays sane.
-    const CANDIDATE_MAX = 6;
+    const CANDIDATE_MAX = candidateMaxForTier(tier);
     const baseCandidates = CANDIDATES[tier] || 1;
     const candidates = (candidatesPerShot != null && Number.isFinite(Number(candidatesPerShot)))
       ? Math.max(1, Math.min(CANDIDATE_MAX, Math.round(Number(candidatesPerShot))))
@@ -729,7 +735,62 @@ const Orchestrator = {
    * Grouped by step so nine jobs across four steps read as four rows, and a step
    * is only "done" when every job in it is.
    */
+  /**
+   * Discard a held shoot — the third reject path at Gate 2 (beside regenerate and
+   * edit-the-plan). Cancels every not-yet-run job (the held motion/voice/assemble/
+   * copy, plus anything queued or blocked behind them) and REFUNDS the credits
+   * they reserved — the same settle(reserved, 0) the failure path uses — then
+   * marks the project discarded. Stills already rendered stay charged; only the
+   * un-run work is returned.
+   */
+  async discard({ tenantId, projectId, userId = null }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await loadHeldShoot(client, tenantId, projectId); // 409 unless it is actually held
+      const { rows: jobs } = await client.query(
+        `SELECT id, stage, payload FROM render_jobs
+          WHERE tenant_id = $1 AND project_id = $2 AND status IN ('held','blocked','queued')
+          FOR UPDATE`,
+        [tenantId, projectId]
+      );
+      let refunded = 0;
+      for (const j of jobs) {
+        const meter = METERED[j.stage];
+        const reserved = Number(j.payload?._reserved || 0);
+        if (meter && (meter.field || meter.fixed) && reserved > 0) {
+          await StudioUsage.settle(
+            client, tenantId, meter.metric, reserved, 0, meter.period,
+            { fromCredits: Number(j.payload?._from_credits || 0), reference: `discard:${j.id}` }
+          );
+          refunded += reserved;
+        }
+      }
+      await client.query(
+        `UPDATE render_jobs SET status = 'cancelled'
+          WHERE tenant_id = $1 AND project_id = $2 AND status IN ('held','blocked','queued')`,
+        [tenantId, projectId]
+      );
+      await client.query(
+        "UPDATE studio_projects SET status = 'discarded' WHERE id = $1 AND tenant_id = $2",
+        [projectId, tenantId]
+      );
+      await client.query('COMMIT');
+      return { project_id: projectId, discarded: true, cancelled: jobs.length, refunded_credits: refunded };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
   async progress(tenantId, projectId) {
+    const { rows: pj } = await pool.query(
+      'SELECT status FROM studio_projects WHERE id = $2 AND tenant_id = $1', [tenantId, projectId]);
+    if (pj[0] && pj[0].status === 'discarded') {
+      return { steps: [], done: 0, total: 0, failed: 0, blocked: 0, held: 0, percent: 0, status: 'discarded' };
+    }
     const { rows } = await pool.query(
       `SELECT step_index, step_total, label,
               COUNT(*)::int                                        AS total,
@@ -795,4 +856,5 @@ const Orchestrator = {
   },
 };
 
+Orchestrator.candidateMaxForTier = candidateMaxForTier;
 module.exports = Orchestrator;

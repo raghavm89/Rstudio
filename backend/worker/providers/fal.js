@@ -110,23 +110,35 @@ const PRICING = {
   anchoredPerMegapixelCents: Number(
     process.env.FAL_PRICE_ANCHORED_MP_CENTS ?? process.env.FAL_PRICE_STILL_MP_CENTS ?? 3.5),
   /**
-   * Video is billed by RESOLUTION, not a flat per-second rate.
+   * Video (Seedance v1 Pro i2v) is billed by RESOLUTION, because fal prices it
+   * by TOKENS rather than a flat per-second rate:
    *
-   * fal prices Seedance by tokens = (h x w x fps x duration), so a higher
-   * resolution costs strictly more per second. The old flat 2.2c/s was the
-   * deprecated Seedance v1 /lite 480p rate; applied to 720p it understated
-   * spend ~2x in the one column the self-hosting decision reads.
+   *     tokens(video) = (height x width x fps x duration) / 1024
+   *     cost          = tokens x $2.5 / 1,000,000     (v1 Pro rate, fal, Sep 2026)
    *
-   * These are fal's PUBLISHED per-second output rates for Seedance 2.0 Mini
-   * (Sep 2026), taken from the rate card rather than hand-derived from the
-   * token formula, so they match the bill not our arithmetic. Mini maxes at
-   * 720p. An unrecognised resolution bills at the HIGHEST known rate (see
-   * runMotion): guessing low quietly under-reports the one number that must
-   * never flatter itself.
+   * fal does not take an fps from us; the model outputs ~24 fps, which is what
+   * reproduces fal's published headline of ~$0.62 for a 1080p 5s clip. At 24 fps
+   * and $2.5/M tokens the per-second output cost works out to:
+   *
+   *     480p  (854x480)   -> 2.40 c/s
+   *     720p  (1280x720)  -> 5.40 c/s
+   *     1080p (1920x1080) -> 12.15 c/s
+   *
+   * (Orientation does not matter: a 9:16 reel has the same pixel count as 16:9.)
+   *
+   * These REPLACE the previous 7.21 / 15.47 defaults, which were Seedance 2.0
+   * *Mini* rates mislabelled onto the v1 Pro endpoint this worker actually calls
+   * (ENDPOINTS.motion) — they overstated motion spend ~2.85x on the one column
+   * the self-hosting decision reads. They now match studio/hero-assets.js, which
+   * carried the correct token-derived numbers all along. An unrecognised
+   * resolution bills at the HIGHEST known rate (see runMotion): guessing low
+   * quietly under-reports the one number that must never flatter itself. Every
+   * rate is env-overridable if fal's fps or per-token price moves.
    */
   motionPerSecondCentsByResolution: {
-    '480p': Number(process.env.FAL_PRICE_MOTION_480_SEC_CENTS ?? 7.21),
-    '720p': Number(process.env.FAL_PRICE_MOTION_720_SEC_CENTS ?? 15.47),
+    '480p':  Number(process.env.FAL_PRICE_MOTION_480_SEC_CENTS  ?? 2.4),
+    '720p':  Number(process.env.FAL_PRICE_MOTION_720_SEC_CENTS  ?? 5.4),
+    '1080p': Number(process.env.FAL_PRICE_MOTION_1080_SEC_CENTS ?? 12.15),
   },
   loraTrainCents:         Number(process.env.FAL_PRICE_LORA_TRAIN_CENTS ?? 200),
 };

@@ -122,7 +122,7 @@ const LookProfile = {
    */
   async describe(tenantId, avatarId) {
     const { rows } = await pool.query(
-      `SELECT a.id, a.slug, a.name, a.identity_block, a.avoid_block,
+      `SELECT a.id, a.slug, a.name, a.identity_block, a.avoid_block, a.mode,
               lp.base_look, lp.lens, lp.colour, lp.grain, lp.skin,
               lp.natural_asymmetry, lp.hair_detail, lp.vocabulary_version,
               l.id AS lora_id, l.trigger_token
@@ -187,7 +187,7 @@ const LookProfile = {
     const trained = Boolean(row.lora_id);
     try {
       const prompt = assemblePrompt({
-        avatar: { slug: row.slug, identity_block: row.identity_block, avoid_block: row.avoid_block },
+        avatar: { slug: row.slug, identity_block: row.identity_block, avoid_block: row.avoid_block, mode: row.mode },
         lora: { trigger_token: row.trigger_token || 'TRIGGER', file_path: 'x', base_checkpoint: null },
         lookProfile: profile,
         shot: PREVIEW_SHOT,

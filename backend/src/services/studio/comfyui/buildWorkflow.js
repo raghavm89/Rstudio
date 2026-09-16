@@ -166,7 +166,13 @@ function lightingPhrase(vocab, shot, scene) {
  * Keep `avoid_block` on the avatar for providers that do honour negatives.
  */
 function assemblePrompt({ avatar, lora, lookProfile, shot, scene, vocabulary, locationText, wardrobeText }) {
-  if (!avatar || !avatar.identity_block || !avatar.identity_block.trim()) {
+  if (!avatar) {
+    throw new WorkflowError('No avatar supplied.');
+  }
+  // A twin's face comes from its trained LoRA, so an empty identity block is
+  // legitimate — the block only ever supported the shot. A synthetic avatar has
+  // nothing but the block to hold a face, so an empty one is still refused.
+  if (avatar.mode !== 'twin' && (!avatar.identity_block || !avatar.identity_block.trim())) {
     throw new WorkflowError('avatar.identity_block is empty — refusing to generate a faceless persona.');
   }
   if (!lora || !lora.trigger_token) {
@@ -180,7 +186,7 @@ function assemblePrompt({ avatar, lora, lookProfile, shot, scene, vocabulary, lo
 
   const parts = {
     trigger:    lora.trigger_token,
-    identity:   avatar.identity_block.trim().replace(/\s+/g, ' '),
+    identity:   (avatar.identity_block || '').trim().replace(/\s+/g, ' '),
     wardrobe:   wardrobeText || '',
     location:   locationText || '',
     pose:       shot.pose_key || '',
@@ -236,7 +242,7 @@ function assembleCharacterPrompt({ avatar, lora, styleProfile, shot, scene, voca
 
   const parts = {
     trigger:    lora.trigger_token,
-    identity:   avatar.identity_block.trim().replace(/\s+/g, ' '),
+    identity:   (avatar.identity_block || '').trim().replace(/\s+/g, ' '),
     wardrobe:   wardrobeText || '',
     location:   locationText || '',
     pose:       shot.pose_key || '',

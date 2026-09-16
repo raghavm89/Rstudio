@@ -41,6 +41,10 @@ export default function NewAvatar() {
   );
 }
 
+// A twin's face comes from its footage, so its identity block is a reduced,
+// all-optional set (no origin/skin/face-shape anchors a synthetic face needs).
+const TWIN_KEYS = ['age', 'presenting', 'height', 'build', 'hair', 'eyes', 'mark'];
+
 const MODES = [
   { key: 'synthetic', label: 'Synthetic',
     blurb: 'A person who does not exist. Nobody to depict, nobody to ask.' },
@@ -70,6 +74,8 @@ function Form({ rules }) {
    * people find out about on an invoice.
    */
   const [genOn, setGenOn] = useState(true);
+  // A twin trains on real footage, not generated frames — never auto-generate one.
+  useEffect(() => { if (mode === 'twin') setGenOn(false); }, [mode]);
   const [genCount, setGenCount] = useState(80);
   const [quote, setQuote] = useState(null);
 
@@ -93,10 +99,16 @@ function Form({ rules }) {
   // trivial, so the preview is the string that gets frozen and not an
   // approximation of it.
   const identity = useMemo(() => compose(f), [f]);
-  const check = useMemo(() => validate(identity, rules, name), [identity, rules, name]);
+  const fields = useMemo(
+    () => (mode === 'twin'
+      ? TWIN_KEYS.map((k) => rules.fields.find((x) => x.key === k)).filter(Boolean).map((x) => ({ ...x, required: false }))
+      : rules.fields),
+    [mode, rules.fields]);
+  const effRules = useMemo(() => (mode === 'twin' ? { ...rules, word_min: 0, twin: true } : rules), [mode, rules]);
+  const check = useMemo(() => validate(identity, effRules, name), [identity, effRules, name]);
 
-  const missing = rules.fields.filter((x) => x.required && !String(f[x.key] || '').trim());
-  const ready = name.trim() && identity && check.ok && !missing.length;
+  const missing = fields.filter((x) => x.required && !String(f[x.key] || '').trim());
+  const ready = name.trim() && (mode === 'twin' || identity) && check.ok && !missing.length;
 
   async function submit(e) {
     e.preventDefault();
@@ -156,13 +168,13 @@ function Form({ rules }) {
           /* Said before it is chosen, not at the train button — by then the seed
              set has been generated and paid for. */
           <div className="lp-msg warn" role="status">
-            <b>A twin cannot be trained yet</b>
+            <b>A twin needs consent first</b>
             <span>
-              Depicting a real person needs a verified consent record — the subject
-              recording a video on a hosted page, matched against the training material.
-              That capture flow is not built, so a twin can be created and described now
-              but training and generation will be refused until it is. It still counts
-              against your avatar allowance.
+              Depicting a real person needs a verified consent record — you record a short
+              consent video and a reference photo on the twin&apos;s clone page, matched to
+              confirm it is you. Create the twin, capture consent, then ingest your footage
+              and train. It counts against your avatar allowance.
+              The Create button below takes you straight to the consent page.
             </span>
           </div>
         )}
@@ -178,7 +190,7 @@ function Form({ rules }) {
         <div className="plan-head">
           <span className="label">Identity — frozen</span>
           <span className={`hint ${check.words > rules.word_max || (check.words && check.words < rules.word_min) ? 'adm-bad' : ''}`}>
-            <b>{check.words}</b> / {rules.word_min}–{rules.word_max} words
+            <b>{check.words}</b> / {effRules.word_min}–{effRules.word_max} words
           </span>
         </div>
         <p className="helper av-freeze-note">
@@ -188,7 +200,7 @@ function Form({ rules }) {
         </p>
 
         <div className="id-grid">
-          {rules.fields.map((x) => (
+          {fields.map((x) => (
             <label className="field" key={x.key}>
               <span className="field-label">
                 {x.label}{x.required ? '' : <span className="helper"> optional</span>}
@@ -221,17 +233,19 @@ function Form({ rules }) {
 
       <section className="card prof-card">
         <div className="plan-head">
-          <span className="label">Then generate their photos</span>
-          <label className="gen-toggle">
-            <input type="checkbox" checked={genOn} onChange={(e) => setGenOn(e.target.checked)} />
-            <span className="helper">Start straight away</span>
-          </label>
+          <span className="label">{mode === 'twin' ? 'Their photos come from your footage' : 'Then generate their photos'}</span>
+          {mode === 'synthetic' && (
+            <label className="gen-toggle">
+              <input type="checkbox" checked={genOn} onChange={(e) => setGenOn(e.target.checked)} />
+              <span className="helper">Start straight away</span>
+            </label>
+          )}
         </div>
 
         <p className="helper av-freeze-note">
-          There is no trained model yet, so these are the base model&rsquo;s attempts at the
-          description above. You keep the ones that agree with each other, and those become
-          what {name.trim() || 'this avatar'} looks like.
+          {mode === 'twin'
+            ? `After you consent, ingest your own footage (studio/ingest-twin.js) — those frames become ${name.trim() || 'this twin'}'s training set. Nothing is generated for a twin.`
+            : `There is no trained model yet, so these are the base model's attempts at the description above. You keep the ones that agree with each other, and those become what ${name.trim() || 'this avatar'} looks like.`}
         </p>
 
         {genOn && (
@@ -324,7 +338,7 @@ function compose(f) {
 function validate(identity, rules, name) {
   const words = identity.trim() ? identity.trim().split(/\s+/).length : 0;
   const errors = [];
-  if (!identity) return { ok: false, words: 0, errors };
+  if (!identity) return { ok: rules.twin === true, words: 0, errors };
 
   if (words > rules.word_max) {
     errors.push({ code: 'TOO_LONG',

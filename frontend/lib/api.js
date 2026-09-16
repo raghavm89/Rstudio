@@ -282,6 +282,7 @@ export async function api(path, options = {}) {
 export const get  = (p)       => api(p);
 export const post = (p, data) => api(p, { method: 'POST', body: JSON.stringify(data ?? {}) });
 export const put  = (p, data) => api(p, { method: 'PUT',  body: JSON.stringify(data ?? {}) });
+export const del  = (p)       => api(p, { method: 'DELETE' });
 
 // ── Sign in ───────────────────────────────────────────────────────────────────
 
