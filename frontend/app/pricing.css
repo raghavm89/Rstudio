@@ -1,0 +1,56 @@
+/* ZoQ — /pricing. Rides the dark z- register; tokens (--v, --ink, --mut, --card,
+   --line, --mono) come from zoq.css via the .z wrapper. Prefix: zp-. */
+
+.zp-hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px; padding: 34px 0 26px; }
+.zp-hero .z-h1 { text-align: center; }
+.zp-hero .z-deck { margin: 0 auto; }
+.zp-billnote { font-family: var(--mono); font-size: 12px; color: var(--mut); letter-spacing: .03em; }
+
+/* ── plan cards ─────────────────────────────────────── */
+.zp-cards-sec { padding: 10px 0 26px; }
+.zp-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; align-items: stretch; }
+.zp-card { position: relative; display: flex; flex-direction: column; gap: 13px; padding: 24px 18px 20px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); }
+.zp-card.feat { border-color: var(--v); background: linear-gradient(180deg, rgba(91,61,245,.12), rgba(20,22,26,0) 62%), var(--card); box-shadow: 0 0 0 1px rgba(91,61,245,.35); }
+.zp-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: #fff; background: var(--v); padding: 4px 11px; border-radius: 999px; white-space: nowrap; }
+.zp-pname { font-weight: 800; font-size: 17px; letter-spacing: -.01em; }
+.zp-price { display: flex; align-items: baseline; gap: 6px; }
+.zp-price b { font-weight: 900; font-size: 30px; letter-spacing: -.02em; }
+.zp-price span { font-family: var(--mono); font-size: 12px; color: var(--mut); }
+.zp-tag { font-size: 13px; line-height: 1.45; color: #A6ACB8; min-height: 40px; }
+.zp-bul { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+.zp-bul li { display: flex; gap: 8px; font-size: 13px; line-height: 1.4; color: #C7CCD6; }
+.zp-bul li svg { flex: none; margin-top: 2px; }
+.zp-card .z-btn { height: 44px; font-size: 14px; justify-content: center; margin-top: 4px; }
+
+/* ── comparison table ───────────────────────────────── */
+.zp-compare { padding-top: 26px; }
+.zp-compare .z-h2 { margin-bottom: 18px; }
+.zp-tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; -webkit-overflow-scrolling: touch; }
+.zp-table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 13.5px; }
+.zp-table th, .zp-table td { padding: 13px 14px; text-align: center; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.zp-table thead th { background: var(--card2); font-weight: 800; font-size: 14px; }
+.zp-table thead th.feat { color: var(--vl); }
+.zp-table th.rowlab, .zp-table td.rowlab { text-align: left; color: var(--ink); font-weight: 600; min-width: 240px; }
+.zp-table tbody td { color: #C7CCD6; }
+.zp-table tbody tr:last-child td { border-bottom: none; }
+.zp-grouprow td { background: var(--card2); font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--mut); text-align: left; font-weight: 700; }
+.zp-yes { display: inline-flex; }
+.zp-no { color: var(--mut2); }
+.zp-col-feat { background: rgba(91,61,245,.06); }
+
+/* ── add-ons ────────────────────────────────────────── */
+.zp-addons { padding-top: 30px; }
+.zp-addgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 18px; }
+.zp-add { padding: 18px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.zp-add h3 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+.zp-add p { margin: 0; font-size: 13px; line-height: 1.5; color: #A6ACB8; }
+.zp-foot-notes { margin-top: 22px; font-family: var(--mono); font-size: 11px; line-height: 1.9; color: var(--mut2); }
+
+/* ── responsive ─────────────────────────────────────── */
+@media (max-width: 980px) {
+  .zp-cards { grid-template-columns: repeat(2, 1fr); }
+  .zp-addgrid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .zp-cards { grid-template-columns: 1fr; }
+}

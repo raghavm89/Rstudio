@@ -35,7 +35,7 @@ export function ZoqNav({ active = '' }) {
         <Link href="/persona" className={active === 'persona' ? 'on' : ''}>Persona</Link>
         <Link href="/clone" className={active === 'clone' ? 'on' : ''}>Clone</Link>
         <Link href="/mascot" className={active === 'mascot' ? 'on' : ''}>Mascot</Link>
-        <Link href="/#pricing" className="hidesm">Pricing</Link>
+        <Link href="/pricing" className={`hidesm${active === 'pricing' ? ' on' : ''}`}>Pricing</Link>
         {signedIn
           ? <Link className="z-signin" href="/avatars">Open Studio</Link>
           : <Link className="z-signin" href="/login">Sign in</Link>}
@@ -59,6 +59,15 @@ export function ZoqFooter() {
   return (
     <footer className="z-foot">
       <span className="disclose">Every persona is disclosed as AI-generated, in the bio and on every post.</span>
+      <span className="z-foot-links" style={{ display: 'flex', gap: 16 }}>
+        <Link href="/persona">Persona</Link>
+        <Link href="/clone">Clone</Link>
+        <Link href="/mascot">Mascot</Link>
+        <Link href="/pricing">Pricing</Link>
+        <Link href="/faq">FAQ</Link>
+        <Link href="/terms">Terms</Link>
+        <Link href="/about">About</Link>
+      </span>
       <span><a href="mailto:hello@zoq.app">hello@zoq.app</a> · © 2026 ZoQ</span>
     </footer>
   );

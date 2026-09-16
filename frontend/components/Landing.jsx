@@ -100,6 +100,11 @@ export default function Landing({ assets = null }) {
             <div className="z-price"><div className="amt">₹15,000</div><div className="plan">ULTRA</div><div className="desc">1,850 credits · ≈ 250 videos + 350 photos + live AI clone</div></div>
           </div>
           <p className="z-price-note">One credit is one photo; a video is about six. Each plan is a monthly credit wallet — trade photos for videos as you please. Top up any time at ₹500 for 77 credits.</p>
+          <div className="z-cta" style={{ marginTop: 18 }}>
+            <Link className="z-btn ghost" href="/pricing">Compare all plans &amp; features
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </Link>
+          </div>
         </section>
 
         {/* ── close ────────────────────────────────────── */}
