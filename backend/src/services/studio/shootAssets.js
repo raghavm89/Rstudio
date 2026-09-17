@@ -96,4 +96,57 @@ async function recordStillAndFeedMotion(client, { existing, done, result }) {
   return { assets: assets.length, motionFed };
 }
 
-module.exports = { recordStillAndFeedMotion, assetKey };
+/**
+ * Feed an upstream output into the shoot's pending lipsync job.
+ *
+ * The lipsync stage (T30) is a fal video-to-video: it needs the assembled clip
+ * (video_url) and the voiceover (audio_url), both produced by earlier jobs. The
+ * worker can't read the DB, so we populate them onto the lipsync job's payload
+ * when those jobs finish — the same hand-off pattern as still -> motion above.
+ * A no-op when there is no lipsync job (i.e. lipsync was not requested).
+ */
+async function feedLipsync(client, projectId, patch, { shotId = null } = {}) {
+  // Match the lipsync job by shot: per-shot lipsync (Phase 2b) carries a shot_id,
+  // the legacy single post-assemble lipsync (T30) carries none. `IS NOT DISTINCT
+  // FROM` matches null-to-null and id-to-id in one predicate.
+  const { rows } = await client.query(
+    `SELECT id, payload FROM render_jobs
+      WHERE project_id = $1 AND stage = 'lipsync' AND status IN ('queued','held')
+        AND shot_id IS NOT DISTINCT FROM $2
+      ORDER BY id LIMIT 1`,
+    [projectId, shotId]
+  );
+  if (!rows[0]) return false;
+  const g = { ...(rows[0].payload?.generation || {}), ...patch };
+  await client.query(
+    `UPDATE render_jobs
+        SET payload = jsonb_set(payload, '{generation}', $2::jsonb, true), updated_at = NOW()
+      WHERE id = $1`,
+    [rows[0].id, JSON.stringify(g)]
+  );
+  return true;
+}
+
+/** Record a finished lipsync clip as the downloadable `reel` asset. */
+async function recordLipsyncReel(client, { job, result }) {
+  // A per-shot relip (Phase 2b, shot_id set) is a clip assemble concatenates, not
+  // the finished reel — assemble records the reel. Skip it here.
+  if (job.shot_id != null) return false;
+  const asset = (result && Array.isArray(result.assets) && result.assets[0]) || null;
+  const key = asset && (asset.key || asset.url);
+  if (!key) {
+    console.error(`[job ${job.id}] lipsync reported no asset — no reel recorded`);
+    return false;
+  }
+  const url = /^https?:\/\//i.test(key) ? key : createStorage().readUrl(key);
+  const pl = job.payload || {};
+  await client.query(
+    `INSERT INTO studio_assets
+       (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
+     VALUES ($1,$2,$3,$4,$5,'reel',$6,'fal',$7,'passed',true)`,
+    [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, url, pl.clip_seconds || null]
+  );
+  return true;
+}
+
+module.exports = { recordStillAndFeedMotion, feedLipsync, recordLipsyncReel, assetKey };

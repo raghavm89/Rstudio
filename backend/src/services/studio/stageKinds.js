@@ -15,7 +15,7 @@
 
 const KIND_BY_STAGE = {
   still: 'still', seed_still: 'still', calib_still: 'still', motion: 'clip',
-  voice: 'voice', assemble: 'reel', lora_train: 'lora',
+  voice: 'voice', assemble: 'reel', lipsync: 'reel', lora_train: 'lora',
 };
 
 const kindForStage = (stage) => KIND_BY_STAGE[stage] || 'asset';

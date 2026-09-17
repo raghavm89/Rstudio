@@ -213,7 +213,7 @@ exports.list = async (req, res) => {
 exports.plan = async (req, res) => {
   const tenantId = req.user.tenant_id;
   if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
-  const { avatar_id, idea, kind = 'reel', clip_seconds = 5, frame_count } = req.body || {};
+  const { avatar_id, idea, kind = 'reel', clip_seconds = 5, frame_count, coverage = false, cast = null } = req.body || {};
   if (!avatar_id) return res.status(400).json({ error: 'avatar_id is required' });
   if (!KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${KINDS.join(', ')}` });
   try {
@@ -226,6 +226,8 @@ exports.plan = async (req, res) => {
       frameCount: frame_count ? Number(frame_count) : undefined,
       tier: (req.user.role === 'admin' || req.user.plan_id) ? 'paid' : 'free',
       userId: req.user.id,
+      coverage: Boolean(coverage),
+      cast: Array.isArray(cast) ? cast : null,
     });
     // Capture the proposal for the self-learning loop, and thread its id so
     // generate can attach the approved (edited) plan. Best-effort: never fail a
@@ -256,7 +258,7 @@ exports.plan = async (req, res) => {
 exports.generate = async (req, res) => {
   const tenantId = req.user.tenant_id;
   if (!tenantId) return res.status(403).json({ error: 'No tenant on this account' });
-  const { avatar_id, kind = 'reel', clip_seconds = 5, brief = {}, scenes, idempotency_key = null, intent = 'cloud', plan_id = null, candidates = null } = req.body || {};
+  const { avatar_id, kind = 'reel', clip_seconds = 5, brief = {}, scenes, idempotency_key = null, intent = 'cloud', plan_id = null, candidates = null, cast = null } = req.body || {};
   if (!Number.isInteger(Number(avatar_id))) return res.status(400).json({ error: 'avatar_id is required' });
   if (!KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${KINDS.join(', ')}` });
   if (!Array.isArray(scenes) || !scenes.length) return res.status(400).json({ error: 'scenes[] is required — plan the shoot first' });
@@ -275,6 +277,7 @@ exports.generate = async (req, res) => {
       kind,
       brief,
       scenes,
+      cast: Array.isArray(cast) ? cast : null,
       tier: (req.user.role === 'admin' || req.user.plan_id) ? 'paid' : 'free',
       clipSeconds,
       idempotencyKey: idempotency_key,

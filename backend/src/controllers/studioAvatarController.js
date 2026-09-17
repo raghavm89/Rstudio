@@ -832,3 +832,119 @@ exports.voiceClone = async (req, res) => {
     cleanup();
   }
 };
+
+
+/**
+ * POST /avatars/:id/voice — set a LIBRARY voice on a synthetic/catalogue avatar
+ * (T35). Twins get their voice from the owned clone (/voice/clone), so they are
+ * refused here. voice_id is the vendor's speaker/voice identifier (a Sarvam
+ * speaker name, or an ElevenLabs voice id), or a JSON blob the adapter parses.
+ */
+exports.setVoice = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { provider, voice_id } = req.body || {};
+  const ALLOWED = ['elevenlabs', 'sarvam'];
+  if (!ALLOWED.includes(provider)) {
+    return res.status(400).json({ error: `provider must be one of ${ALLOWED.join(', ')}`, code: 'BAD_PROVIDER' });
+  }
+  if (!voice_id || !String(voice_id).trim()) {
+    return res.status(400).json({ error: 'voice_id is required', code: 'NO_VOICE_ID' });
+  }
+  const { rows } = await pool.query(
+    'SELECT id, mode FROM avatars WHERE id = $1 AND tenant_id = $2', [avatarId, req.user.tenant_id]);
+  const av = rows[0];
+  if (!av) return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' });
+  if (av.mode === 'twin') {
+    return res.status(409).json({ error: 'A twin uses its cloned voice — set it with “Clone my voice”', code: 'IS_TWIN' });
+  }
+  await pool.query(
+    'UPDATE avatars SET voice_provider = $2, voice_id = $3, updated_at = NOW() WHERE id = $1 AND tenant_id = $4',
+    [avatarId, provider, String(voice_id).trim(), req.user.tenant_id]);
+  return res.json({ ok: true, voice_provider: provider, voice_id: String(voice_id).trim() });
+};
+
+// ── Mode 3: character image upload ───────────────────────────────────────────
+// A character can be built from an uploaded image, but only behind a logged
+// rights attestation (decision-character-avatars-mode3.md). The attestation is
+// recorded BEFORE the bytes are accepted: this endpoint logs the tick, links it
+// to the avatar, and only THEN hands back a presigned upload target. The bytes
+// are turned into training material by the operator ingest (parity with twin).
+const CharacterAttestation = require('../services/studio/characterAttestation');
+
+exports.attestCharacterUpload = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { attested, filename, contentType } = req.body || {};
+  if (attested !== true) {
+    return res.status(400).json({ error: 'You must accept the rights attestation before uploading', code: 'NOT_ATTESTED' });
+  }
+  if (!filename || !contentType) {
+    return res.status(400).json({ error: 'filename and contentType are required', code: 'BAD_UPLOAD' });
+  }
+  if (!/^image\//.test(String(contentType))) {
+    return res.status(415).json({ error: 'Only an image upload is allowed here', code: 'BAD_CONTENT_TYPE' });
+  }
+
+  const { createStorage } = require('../services/studio/storageFactory');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Presign first to know the key, so the attestation records exactly where
+    // the bytes will land — but the presigned URL is not the bytes; the record
+    // is still written before anything is accepted.
+    const { rows: av } = await client.query(
+      'SELECT slug, subject_type FROM avatars WHERE id = $1 AND tenant_id = $2', [avatarId, req.user.tenant_id]);
+    if (!av[0]) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' }); }
+    if (av[0].subject_type !== 'character') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Only a character avatar can be built from an uploaded image', code: 'NOT_A_CHARACTER' });
+    }
+
+    const target = createStorage().uploadTarget({
+      tenantId: req.user.tenant_id, avatarSlug: av[0].slug, projectId: 'character-upload',
+      kind: 'seed', filename, contentType,
+    });
+
+    const record = await CharacterAttestation.record(client, {
+      tenantId: req.user.tenant_id, avatarId, userId: req.user.id,
+      uploadRef: target.key, ip: req.ip || null, userAgent: req.headers?.['user-agent'] || null,
+      attested: true,
+    });
+
+    await client.query('COMMIT');
+    // The browser PUTs to `url`; `attestation_id` + `key` let the operator ingest
+    // finish. `public_url` is what the ingest resolves the key to.
+    return res.json({
+      attestation_id: record.id,
+      attestation_version: record.attestation_text_version,
+      ...target,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message, code: err.code || 'ATTEST_FAILED' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.characterUploadStatus = async (req, res) => {
+  const avatarId = Number(req.params.id);
+  const { rows: av } = await pool.query(
+    'SELECT id, subject_type, character_source, anchor_candidate_id FROM avatars WHERE id = $1 AND tenant_id = $2',
+    [avatarId, req.user.tenant_id]);
+  if (!av[0]) return res.status(404).json({ error: 'No such avatar in this workspace', code: 'NO_AVATAR' });
+
+  const rec = await CharacterAttestation.active(pool, { avatarId, tenantId: req.user.tenant_id });
+  return res.json({
+    subject_type: av[0].subject_type,
+    character_source: av[0].character_source,
+    has_anchor: Boolean(av[0].anchor_candidate_id),
+    attestation: rec ? {
+      id: rec.id, active: rec.active, version: rec.attestation_text_version,
+      source_hash: rec.source_hash, created_at: rec.created_at,
+    } : null,
+    attestation_text: CharacterAttestation.ATTESTATION_TEXT,
+    attestation_version: CharacterAttestation.ATTESTATION_TEXT_VERSION,
+  });
+};

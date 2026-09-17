@@ -64,6 +64,9 @@ const ENDPOINTS = {
   // and is the model that animated Aanya's hero clip. Override with FAL_MOTION_MODEL.
   motion:     process.env.FAL_MOTION_MODEL || 'fal-ai/bytedance/seedance/v1/pro/image-to-video',
   lora_train: process.env.FAL_LORA_TRAINER || 'fal-ai/flux-lora-fast-training',
+  // Lip-sync (video-to-video): relip a face clip to a voice track. Budget
+  // default = LatentSync; premium/max resolved per-tier in runLipsync.
+  lipsync:    process.env.FAL_LIPSYNC_MODEL  || 'fal-ai/latentsync',
 };
 
 /**
@@ -77,6 +80,17 @@ const ENDPOINTS = {
  * carries a reference face.
  */
 const ANCHORED_MODEL = process.env.FAL_ANCHORED_MODEL || 'fal-ai/flux-pulid';
+
+/**
+ * Lip-sync endpoints by tier (offering-frozen-spec §2): budget = LatentSync,
+ * premium = Sync v2, max = VEED. All are fal video-to-video: a source face clip
+ * + an audio track -> a relipped clip. Env-overridable, since fal renames these.
+ */
+const LIPSYNC_MODELS = {
+  budget:  process.env.FAL_LIPSYNC_MODEL   || 'fal-ai/latentsync',
+  premium: process.env.FAL_LIPSYNC_PREMIUM || 'fal-ai/sync-lipsync/v2/pro',
+  max:     process.env.FAL_LIPSYNC_MAX     || 'veed/lipsync',
+};
 
 /** Storage serves by extension, so the name has to agree with the bytes. */
 const EXT_BY_TYPE = {
@@ -638,6 +652,52 @@ class FalProvider {
   }
 
   /** Uniform entry point, so the worker loop does not branch on provider. */
+  /**
+   * Lip-sync a source clip to a voice track (Phase-1 talking-head, T30).
+   *
+   * Both inputs come from upstream jobs (the assembled/passthrough clip and the
+   * voice), populated onto this job's payload.generation before it is claimed
+   * (shootAssets.feedLipsync). fal's lipsync models are video-to-video, so the
+   * source must already be a face clip; the tier picks the endpoint.
+   */
+  async runLipsync(job, { onProgress } = {}) {
+    const gen = job.payload?.generation || {};
+    if (!gen.video_url) throw new FalError('Lipsync inputs not populated yet (video_url) — will retry', { permanent: false, code: 'NO_INPUT_VIDEO' });
+    if (!gen.audio_url) throw new FalError('Lipsync inputs not populated yet (audio_url) — will retry', { permanent: false, code: 'NO_INPUT_AUDIO' });
+
+    const tier = job.payload?.lipsync_tier || gen.lipsync_tier || 'budget';
+    const model = LIPSYNC_MODELS[tier] || LIPSYNC_MODELS.budget;
+
+    // fal's loaders cannot read through the ngrok interstitial; hand them
+    // fal.media URLs (same reasoning as runMotion.ensureFetchable).
+    const videoUrl = await this.ensureFetchable(gen.video_url, { publiclyFetchable: false, filename: 'source.mp4', contentType: 'video/mp4' });
+    const audioUrl = await this.ensureFetchable(gen.audio_url, { publiclyFetchable: false, filename: 'voice.mp3', contentType: 'audio/mpeg' });
+
+    const input = { video_url: videoUrl, audio_url: audioUrl };
+    const handle = await this.submit('lipsync', input, { model });
+    const out = await this.waitForResult(handle, { onProgress });
+
+    const video = out.video;
+    if (!video || !video.url) throw new FalError('fal lipsync completed but returned no video', { permanent: true, code: 'NO_OUTPUT' });
+
+    const seconds = Number(gen.seconds || job.payload?.clip_seconds || 0);
+    const perSec = Number(process.env.FAL_LIPSYNC_PER_SEC_CENTS || 0.6);
+    return {
+      artifacts: [{
+        filename: `${gen.filenamePrefix || 'talkinghead'}.mp4`,
+        contentType: video.content_type || 'video/mp4',
+        url: video.url,
+        fetch: () => this._download(video.url),
+      }],
+      meta: {
+        provider: PROVIDER,
+        model,
+        request_id: handle.requestId,
+        cost_cents: seconds > 0 ? Math.round(seconds * perSec) : 0,
+      },
+    };
+  }
+
   async run(job, opts = {}) {
     switch (job.stage) {
       case 'still':
@@ -647,6 +707,7 @@ class FalProvider {
       case 'seed_still': return this.runSeedStill(job, opts);
       case 'motion':     return this.runMotion(job, opts);
       case 'lora_train': return this.runLoraTraining(job, opts);
+      case 'lipsync':    return this.runLipsync(job, opts);
       default:
         throw new FalError(`fal provider does not handle stage "${job.stage}"`, { permanent: true, code: 'UNSUPPORTED_STAGE' });
     }

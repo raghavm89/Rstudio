@@ -3,7 +3,7 @@
 const pool = require("../../config/db");
 const JobUpload = require("./jobUpload");
 const { createStorage } = require("./storageFactory");
-const { runFfmpeg } = require("./ffmpeg");
+const { runFfmpeg, stitchSegments } = require("./ffmpeg");
 
 /**
  * The `assemble` stage — stitch a shoot's motion clips (and voiceover) into one
@@ -63,31 +63,85 @@ const AssembleStage = {
     }
     const storage = deps.storage || createStorage();
     const stitch = deps.stitch || runFfmpeg;
+    const stitchSeg = deps.stitchSegments || stitchSegments;
 
-    // Pull inputs from the finished dependency jobs (frame order = id order).
+    // Pull inputs from THIS assemble's own dependencies (frame order = id order),
+    // not every motion/voice job in the project — otherwise a re-animate ("new
+    // take") would stitch the old take's clips together with the new ones.
     const client = await pool.connect();
-    let clips, voice;
+    let clips, voice, motionRows, voiceRowsAll, lipRowsAll;
     try {
-      // Pull clips from THIS assemble's own dependencies, not every motion job in
-      // the project — otherwise a re-animate ("new take") would stitch the old
-      // take's clips together with the new ones.
-      const deps = Array.isArray(job.depends_on) ? job.depends_on : [];
+      const deps2 = Array.isArray(job.depends_on) ? job.depends_on : [];
       const { rows: motion } = await client.query(
-        `SELECT result FROM render_jobs
+        `SELECT id, shot_id, result FROM render_jobs
           WHERE id = ANY($1::int[]) AND stage = 'motion' AND status = 'done'
           ORDER BY id`,
-        [deps]
+        [deps2]
       );
+      motionRows = motion;
       clips = motion.map((m) => firstAssetKey(m.result));
       const { rows: voiceRows } = await client.query(
-        `SELECT result FROM render_jobs
+        `SELECT id, shot_id, result FROM render_jobs
           WHERE id = ANY($1::int[]) AND stage = 'voice' AND status = 'done'
-          ORDER BY id LIMIT 1`,
-        [deps]
+          ORDER BY id`,
+        [deps2]
       );
+      voiceRowsAll = voiceRows;
       voice = voiceRows[0] ? firstAssetKey(voiceRows[0].result) : null;
+      // Per-shot relipped clips (Phase 2b), if any — each carries its own audio.
+      const { rows: lipRows } = await client.query(
+        `SELECT id, shot_id, result FROM render_jobs
+          WHERE id = ANY($1::int[]) AND stage = 'lipsync' AND status = 'done'
+          ORDER BY id`,
+        [deps2]
+      );
+      lipRowsAll = lipRows;
     } finally {
       client.release();
+    }
+
+    // ── Per-shot dialogue (Phase 2a) ───────────────────────────────────────
+    // If the voice jobs are per-shot (they carry a shot_id), each clip gets its
+    // OWN line muxed onto it and the segments are concatenated — a multi-speaker
+    // reel where each character is heard over their own shot.
+    const perShotVoice = (voiceRowsAll || []).some((v) => v.shot_id != null);
+    const perShotLip = (lipRowsAll || []).some((l) => l.shot_id != null);
+    if (perShotVoice || perShotLip) {
+      const toUrl = (k) => (k && /^https?:\/\//i.test(k) ? k : (k ? storage.readUrl(k) : null));
+      const voiceByShot = new Map();
+      for (const v of (voiceRowsAll || [])) if (v.shot_id != null) voiceByShot.set(v.shot_id, firstAssetKey(v.result));
+      const lipByShot = new Map();
+      for (const l of (lipRowsAll || [])) if (l.shot_id != null) lipByShot.set(l.shot_id, firstAssetKey(l.result));
+      // Per shot: prefer the RELIPPED clip (Phase 2b — lips move, audio already
+      // baked in, so no voice mux); else the motion clip with its shot's line
+      // muxed on (Phase 2a); else a silent motion clip.
+      const segments = motionRows
+        .map((m) => {
+          const relip = lipByShot.get(m.shot_id);
+          if (relip) return { clipUrl: toUrl(relip), voiceUrl: null };
+          return { clipUrl: toUrl(firstAssetKey(m.result)), voiceUrl: toUrl(voiceByShot.get(m.shot_id) || null) };
+        })
+        .filter((seg) => seg.clipUrl);
+      if (!segments.length) throw new AssembleError("No finished clips to assemble", { permanent: true });
+
+      const buffer = await stitchSeg({ segments });
+      if (!buffer || !buffer.length) throw new AssembleError("assemble produced an empty video", { permanent: false });
+
+      const asset = await JobUpload.store(
+        job,
+        { filename: "reel.mp4", contentType: "video/mp4", fetch: async () => buffer },
+        { kind: "reel" }
+      );
+      const reelUrl = asset.url || (asset.key ? storage.readUrl(asset.key) : null);
+      const pl = job.payload || {};
+      await pool.query(
+        `INSERT INTO studio_assets
+           (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
+         VALUES ($1,$2,$3,$4,$5,'reel',$6,'ffmpeg',$7,'passed',true)`,
+        [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, reelUrl,
+         (Number(pl.clip_seconds) || 5) * (segments.length || 1)]
+      );
+      return { video_key: asset.key || asset.url || null, segments: segments.length, perShot: true, bytes: buffer.length };
     }
 
     const plan = decideAssembly({ clips, voice });
@@ -103,8 +157,8 @@ const AssembleStage = {
       await pool.query(
         `INSERT INTO studio_assets
            (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
-         VALUES ($1,$2,$3,$4,$5,'reel',$6,'fal',$7,'passed',true)`,
-        [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, reelUrl, pl.clip_seconds || null]
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'fal',$8,'passed',true)`,
+        [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, (pl._lipsync ? 'clip' : 'reel'), reelUrl, pl.clip_seconds || null]
       );
       return { video_key: clipKey, clips: plan.clips, voice: null, passthrough: true };
     }
@@ -130,8 +184,8 @@ const AssembleStage = {
     await pool.query(
       `INSERT INTO studio_assets
          (tenant_id, project_id, shot_id, avatar_id, lora_id, kind, storage_url, provider, seconds, qc_status, selected)
-       VALUES ($1,$2,$3,$4,$5,'reel',$6,'ffmpeg',$7,'passed',true)`,
-      [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, reelUrl,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'ffmpeg',$8,'passed',true)`,
+      [job.tenant_id, job.project_id, job.shot_id || null, pl.avatar_id || null, pl.lora_id || null, (pl._lipsync ? 'clip' : 'reel'), reelUrl,
        (Number(pl.clip_seconds) || 5) * (plan.clips.length || 1)]
     );
 

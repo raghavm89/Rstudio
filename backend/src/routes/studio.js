@@ -121,6 +121,8 @@ adminRouter.post('/query',               asyncHandler(admin.query));
 adminRouter.get ('/audit',               asyncHandler(admin.auditLog));
 adminRouter.get   ('/consents',          asyncHandler(admin.listConsents));
 adminRouter.post  ('/consents/:id/approve', parseId('id'), asyncHandler(admin.approveConsent));
+adminRouter.get   ('/character-attestations',            asyncHandler(admin.listCharacterAttestations));
+adminRouter.post  ('/character-attestations/:id/takedown', parseId('id'), asyncHandler(admin.takedownCharacter));
 adminRouter.get   ('/catalogue',         asyncHandler(admin.listCatalogue));
 adminRouter.post  ('/catalogue',         asyncHandler(admin.addCatalogue));
 adminRouter.delete('/catalogue/:id',     parseId('id'), asyncHandler(admin.removeCatalogue));
@@ -166,6 +168,7 @@ router.post('/avatars/:id/publish-to-catalogue', authorize('admin'), parseId('id
 const templateCtrl = require('../controllers/studioTemplateController');
 router.get   ('/templates',                authorize(...TENANT_ROLES), asyncHandler(templateCtrl.list));
 router.post  ('/templates',                authorize(...TENANT_ROLES), asyncHandler(templateCtrl.create));
+router.post  ('/templates/extract',        authorize(...TENANT_ROLES), asyncHandler(templateCtrl.extract));
 router.post  ('/templates/from-shoot/:id', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.saveFromShoot));
 router.get   ('/templates/:id',            authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.get));
 router.post  ('/templates/:id/apply',      authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.apply));
@@ -180,10 +183,17 @@ const consentCtrl = require('../controllers/studioConsentController');
 router.post('/avatars/:id/upload-target', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.uploadTarget));
 router.post('/avatars/:id/twin-material', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.twinMaterial));
 router.get ('/avatars/:id/twin-status',   authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.twinStatus));
+router.post('/avatars/:id/voice',          authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.setVoice));
 router.post('/avatars/:id/voice/clone',    authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.voiceClone));
 router.delete('/avatars/:id', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.remove));
 router.post('/avatars/:id/consent', authorize(...TENANT_ROLES), parseId('id'), asyncHandler(consentCtrl.create));
 router.post('/consent/:id/verify',  authorize(...TENANT_ROLES), parseId('id'), asyncHandler(consentCtrl.verify));
+
+// Mode 3 — character image upload. The attestation is logged before the bytes:
+// `attest` records the rights tick + returns a presigned target; the operator
+// ingest turns the uploaded image into an anchor + pool.
+router.post('/avatars/:id/character-upload/attest',  authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.attestCharacterUpload));
+router.get ('/avatars/:id/character-upload/status',  authorize(...TENANT_ROLES), parseId('id'), asyncHandler(avatarCtrl.characterUploadStatus));
 
 // Culling — the pool, the verdicts and the export gate.
 //

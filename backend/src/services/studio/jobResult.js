@@ -177,6 +177,19 @@ async function failed(existing, workerId, { error, permanent }) {
     }
   }
 
+  // Best-effort stitch (opt-in via brief.best_effort): a permanently DEAD motion
+  // clip is detached from the reel's assemble so the survivors still stitch,
+  // rather than the whole reel stalling forever on one failed shot. If every
+  // clip dies, assemble runs with none and fails honestly ("no clips").
+  if (job.status === 'failed' && job.stage === 'motion' && existing.payload && existing.payload._best_effort) {
+    await inTransaction((client) => client.query(
+      `UPDATE render_jobs
+          SET depends_on = array_remove(depends_on, $1), updated_at = NOW()
+        WHERE project_id = $2 AND stage = 'assemble' AND $1 = ANY(depends_on)`,
+      [job.id, job.project_id]
+    )).catch((e) => console.error(`[job ${job.id}] best-effort detach failed: ${e.message}`));
+  }
+
   // A permanently failed job releases the quota it reserved. A requeued one
   // keeps it — the attempt will be retried and will cost again. For a fixed
   // credit piece the reserved amount IS the charge, so releasing it (actual = 0)
@@ -255,6 +268,66 @@ async function recordArtefacts(existing, done, result, cost_cents) {
     } finally {
       client.release();
     }
+    return;
+  }
+
+  // Per-shot lipsync (Phase 2b) waits on its OWN motion clip and voice. When the
+  // motion clip finishes, feed it as this shot's lipsync video_url (matched by
+  // shot_id). A no-op unless a per-shot lipsync job exists for this shot.
+  if (done.stage === 'motion' && done.shot_id != null) {
+    try {
+      const key = ShootAssets.assetKey((result.assets || [])[0]);
+      if (key) {
+        const { createStorage } = require('./storageFactory');
+        const url = /^https?:\/\//i.test(key) ? key : createStorage().readUrl(key);
+        const seconds = Number(existing.payload?.clip_seconds) || 0;
+        const client = await pool.connect();
+        try { await ShootAssets.feedLipsync(client, done.project_id, { video_url: url, seconds }, { shotId: done.shot_id }); }
+        finally { client.release(); }
+      }
+    } catch (err) { console.error(`[job ${done.id}] motion->lipsync feed failed: ${err.message}`); }
+    // fall through: motion has no other artefact wiring, but don't return — keep
+    // the shape uniform with the other feeds, which each return.
+    return;
+  }
+
+  // Lipsync (T30) is fed from upstream jobs: the assembled clip and the voice.
+  // The worker can't read the DB, so we populate the lipsync job's inputs here
+  // when its dependencies finish. All no-ops when lipsync was not requested.
+  if (done.stage === 'assemble') {
+    try {
+      const key = result && result.video_key;
+      if (key) {
+        const { createStorage } = require('./storageFactory');
+        const url = /^https?:\/\//i.test(key) ? key : createStorage().readUrl(key);
+        const seconds = (Number(existing.payload?.clip_seconds) || 0) * ((result.clips && result.clips.length) || 1);
+        const client = await pool.connect();
+        try { await ShootAssets.feedLipsync(client, done.project_id, { video_url: url, seconds }, { shotId: null }); }
+        finally { client.release(); }
+      }
+    } catch (err) { console.error(`[job ${done.id}] assemble->lipsync feed failed: ${err.message}`); }
+    return;
+  }
+
+  if (done.stage === 'voice') {
+    try {
+      const key = ShootAssets.assetKey((result.assets || [])[0]);
+      if (key) {
+        const { createStorage } = require('./storageFactory');
+        const url = /^https?:\/\//i.test(key) ? key : createStorage().readUrl(key);
+        const client = await pool.connect();
+        try { await ShootAssets.feedLipsync(client, done.project_id, { audio_url: url }, { shotId: done.shot_id || null }); }
+        finally { client.release(); }
+      }
+    } catch (err) { console.error(`[job ${done.id}] voice->lipsync feed failed: ${err.message}`); }
+    return;
+  }
+
+  if (done.stage === 'lipsync') {
+    const client = await pool.connect();
+    try { await ShootAssets.recordLipsyncReel(client, { job: done, result }); }
+    catch (err) { console.error(`[job ${done.id}] lipsync finished but reel not recorded: ${err.message}`); }
+    finally { client.release(); }
     return;
   }
 

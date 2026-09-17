@@ -160,11 +160,81 @@ async function indicF5Tts({
   }
 }
 
+/** WAV Buffer -> mp3 Buffer via ffmpeg, so a Sarvam voice matches the voice.mp3 asset. */
+async function wavToMp3(wavBuffer, ffmpeg = process.env.FFMPEG_PATH || "ffmpeg") {
+  const fs = require("fs"), os = require("os"), path = require("path");
+  const { spawn } = require("child_process");
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const inP = path.join(os.tmpdir(), `sarvam-${stamp}.wav`);
+  const outP = path.join(os.tmpdir(), `sarvam-${stamp}.mp3`);
+  fs.writeFileSync(inP, wavBuffer);
+  try {
+    await new Promise((resolve, reject) => {
+      const c = spawn(ffmpeg, ["-y", "-i", inP, "-codec:a", "libmp3lame", "-q:a", "3", outP], { stdio: ["ignore", "ignore", "pipe"] });
+      let err = "";
+      c.stderr.on("data", (d) => { err += d; });
+      c.on("error", (e) => reject(new VoiceError(`Could not start ffmpeg: ${e.message}`, { permanent: true })));
+      c.on("close", (code) => (code === 0 ? resolve() : reject(new VoiceError(`ffmpeg exit ${code}: ${err.slice(0, 200)}`, { permanent: false }))));
+    });
+    const buf = fs.readFileSync(outP);
+    if (!buf.length) throw new VoiceError("Sarvam mp3 was empty after transcode", { permanent: false });
+    return buf;
+  } finally {
+    try { fs.unlinkSync(inP); } catch { /* gone */ }
+    try { fs.unlinkSync(outP); } catch { /* gone */ }
+  }
+}
+
+/**
+ * Sarvam Bulbul TTS -> mp3 Buffer (T35). India-native, model-level Hinglish
+ * code-switching (decision-voice-tts.md). voice_id is a speaker name, or a JSON
+ * blob { speaker, lang, model }. Field names + model are env-overridable because
+ * Sarvam versions the API (bulbul:v2 -> v3) and the request shape has drifted.
+ */
+async function sarvamTts({
+  text, voiceId,
+  apiKey = process.env.SARVAM_API_KEY,
+  model = process.env.SARVAM_TTS_MODEL || "bulbul:v2",
+  lang = process.env.SARVAM_LANG || "hi-IN",
+  url = process.env.SARVAM_TTS_URL || "https://api.sarvam.ai/text-to-speech",
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  if (!apiKey) throw new VoiceError("No SARVAM_API_KEY configured for voiceover", { permanent: true });
+
+  let speaker = voiceId, l = lang, m = model;
+  try {
+    const cfg = JSON.parse(voiceId);
+    if (cfg && typeof cfg === "object") { speaker = cfg.speaker || speaker; l = cfg.lang || l; m = cfg.model || m; }
+  } catch { /* voiceId is a plain speaker string */ }
+
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: { "api-subscription-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text: String(text).slice(0, 2500),
+      target_language_code: l,
+      speaker: String(speaker || "anushka"),
+      model: m,
+      speech_sample_rate: Number(process.env.SARVAM_SR || 24000),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const permanent = res.status >= 400 && res.status < 500 && res.status !== 429;
+    throw new VoiceError(`Sarvam TTS ${res.status}: ${body.slice(0, 200)}`, { permanent });
+  }
+  const json = await res.json().catch(() => null);
+  const b64 = json && (Array.isArray(json.audios) ? json.audios[0] : json.audio);
+  if (!b64) throw new VoiceError("Sarvam returned no audio", { permanent: false });
+  return wavToMp3(Buffer.from(b64, "base64"));
+}
+
 const VoiceStage = {
   VoiceError,
   pickScript,
   elevenLabsTts,
   indicF5Tts,
+  sarvamTts,
   resolveRefAudio,
 
   async execute(job, deps = {}) {
@@ -174,24 +244,42 @@ const VoiceStage = {
     const client = deps.db || (await pool.connect());
     let ctx;
     try {
-      const { rows } = await client.query(
-        `SELECT p.brief, a.name, a.voice_provider, a.voice_id
-           FROM studio_projects p
-           JOIN avatars a ON a.id = p.avatar_id
-          WHERE p.id = $1 AND p.tenant_id = $2`,
-        [job.project_id, job.tenant_id]
-      );
-      ctx = rows[0];
+      if (job.shot_id) {
+        // Per-shot dialogue (multi-character, Phase 2a): the line is the shot's
+        // `dialogue`, spoken in the shot's ON-SCREEN character's voice. assemble
+        // muxes this onto that shot's clip. Read the shot + its speaker.
+        const { rows } = await client.query(
+          `SELECT sh.dialogue AS script, sp.name, sp.voice_provider, sp.voice_id
+             FROM studio_shots sh
+             JOIN studio_scenes sc ON sc.id = sh.scene_id
+             LEFT JOIN avatars sp ON sp.id = sh.speaker_avatar_id
+            WHERE sh.id = $1 AND sc.project_id = $2`,
+          [job.shot_id, job.project_id]
+        );
+        ctx = rows[0] ? { ...rows[0], _perShot: true } : null;
+      } else {
+        // Legacy single voiceover: the whole reel, from the brief + the lead voice.
+        const { rows } = await client.query(
+          `SELECT p.brief, a.name, a.voice_provider, a.voice_id
+             FROM studio_projects p
+             JOIN avatars a ON a.id = p.avatar_id
+            WHERE p.id = $1 AND p.tenant_id = $2`,
+          [job.project_id, job.tenant_id]
+        );
+        ctx = rows[0];
+      }
     } finally {
       if (ownClient) client.release();
     }
-    if (!ctx) throw new VoiceError("Project not found", { permanent: true });
+    if (!ctx) throw new VoiceError(job.shot_id ? "Shot not found for voicing" : "Project not found", { permanent: true });
 
-    const script = pickScript(ctx.brief);
-    if (!script) throw new VoiceError("No script for the voiceover — the brief has no script, hook or concept", { permanent: true });
+    // Per-shot uses the shot's `dialogue` verbatim; the legacy path derives a
+    // script from the brief.
+    const script = ctx._perShot ? (ctx.script && String(ctx.script).trim() ? String(ctx.script).trim() : null) : pickScript(ctx.brief);
+    if (!script) throw new VoiceError(ctx._perShot ? "This shot has no dialogue to voice" : "No script for the voiceover — the brief has no script, hook or concept", { permanent: true });
 
     const provider = ctx.voice_provider || "elevenlabs";
-    if (!ctx.voice_id) throw new VoiceError("This avatar has no locked voice — choose or clone one before a voiceover shoot", { permanent: true });
+    if (!ctx.voice_id) throw new VoiceError(ctx._perShot ? "This shot's speaker has no locked voice" : "This avatar has no locked voice — choose or clone one before a voiceover shoot", { permanent: true });
 
     let audio;
     if (provider === "elevenlabs") {
@@ -199,6 +287,9 @@ const VoiceStage = {
       audio = await tts({ text: script, voiceId: ctx.voice_id });
     } else if (provider === "indicf5") {
       const synth = deps.indicf5 || indicF5Tts;
+      audio = await synth({ text: script, voiceId: ctx.voice_id });
+    } else if (provider === "sarvam") {
+      const synth = deps.sarvam || sarvamTts;
       audio = await synth({ text: script, voiceId: ctx.voice_id });
     } else {
       throw new VoiceError(`Voice provider "${provider}" is not wired yet`, { permanent: true });

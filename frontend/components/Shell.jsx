@@ -32,6 +32,7 @@ const NAV = [
   { href: '/avatars',  label: 'Avatar' },
   { section: 'Make' },
   { href: '/shoots',   label: 'Shoots' },
+  { href: '/talking-head', label: 'Talking head' },
   { href: '/templates', label: 'Templates' },
   { href: '/library',  label: 'Library' },
   { section: 'Out' },

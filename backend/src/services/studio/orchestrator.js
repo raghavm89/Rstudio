@@ -6,6 +6,7 @@ const StudioUsage  = require('../../models/studioUsage');
 const RunnerPolicy = require('./runnerPolicy');
 const { creditCostFor } = require('./creditCost');
 const { METERED } = require('./jobResult');
+const StoryCast = require('./storyCast');
 
 /**
  * The one click.
@@ -42,7 +43,7 @@ function candidateMaxForTier(tier) { return CANDIDATE_MAX_BY_TIER[tier] || CANDI
 
 const SECONDS_PER_CLIP = 5;
 
-function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution = '480p', wantsVoice = false }) {
+function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution = '480p', wantsVoice = false, wantsLipsync = false, lipsyncTier = 'budget', dialogueShots = [] }) {
   const stages = [];
   let step = 0;
   // Runners come from the licence policy, not from literals here. See
@@ -59,7 +60,22 @@ function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution =
   }
   step += 1;
 
-  if (kind === 'reel' || kind === 'short' || kind === 'longform') {
+  const isReel = kind === 'reel' || kind === 'short' || kind === 'longform';
+  // Lipsync (T30) relips the finished clip to the voiceover, so it only turns
+  // on when a voice is actually being recorded.
+  // Per-shot dialogue (Phase 2a) voices each shot in its speaker's voice and
+  // muxes it per clip in assemble; the single post-assemble relip (T30) does
+  // not apply, so lipsync stays off in dialogue mode (per-shot lipsync = 2b).
+  const hasDialogue = Array.isArray(dialogueShots) && dialogueShots.length > 0;
+  const wantsLip = isReel && wantsLipsync && wantsVoice && !hasDialogue;
+  // Phase 2b: in dialogue mode, lipsync is PER SHOT — each shot's clip is
+  // relipped to ITS line before assemble concatenates (each dialogue shot has
+  // a voice:i, so lipsync:i has audio to sync to). This inverts the T30 order
+  // (there lipsync runs after assemble and IS the reel); here assemble is the
+  // terminal concat of the relipped clips.
+  const perShotLip = isReel && hasDialogue && wantsLipsync;
+
+  if (isReel) {
     for (let i = 1; i <= frameCount; i += 1) {
       stages.push({
         key: `motion:${i}`, stage: 'motion', runner: runner('motion'), after: [`qc:${i}`],
@@ -73,20 +89,56 @@ function planFor({ kind, frameCount, clipSeconds, intent = 'cloud', resolution =
     }
     step += 1;
 
-    // A voiceover is opt-in (see createShoot). Without one the reel is a silent
-    // clip — a visual reel should not fail on a voice stage nobody asked for.
-    if (wantsVoice) {
+    // Voice. Two shapes:
+    //   • per-shot dialogue (Phase 2a) — one voice job per dialogue shot, each in
+    //     that shot's speaker's voice; assemble muxes each onto its own clip.
+    //   • legacy single voiceover — one voice for the whole reel.
+    // A visual reel with neither stays a silent clip.
+    if (hasDialogue) {
+      for (const i of dialogueShots) {
+        stages.push({ key: `voice:${i}`, stage: 'voice', runner: runner('voice'), after: ['prompt'], label: `Voicing shot ${i}`, step });
+      }
+      step += 1;
+      if (perShotLip) {
+        for (const i of dialogueShots) {
+          stages.push({
+            key: `lipsync:${i}`, stage: 'lipsync', runner: runner('lipsync'),
+            after: [`motion:${i}`, `voice:${i}`], label: `Syncing lips on shot ${i}`, step,
+            lipsyncTier,
+            meter: { metric: 'credits', amount: creditCostFor({ stage: 'lipsync', lipsyncTier }) },
+          });
+        }
+        step += 1;
+      }
+    } else if (wantsVoice) {
       stages.push({ key: 'voice', stage: 'voice', runner: runner('voice'), after: ['prompt'], label: 'Recording the voice', step: step++ });
     }
 
+    // With lipsync on, assemble stitches the clips SILENT (voice not muxed) and
+    // the lipsync stage adds the voice by relipping the finished clip. Without
+    // it, assemble muxes the voiceover as before.
     stages.push({
       key: 'assemble', stage: 'assemble', runner: runner('assemble'), label: 'Putting it together', step: step++,
-      after: [...Array.from({ length: frameCount }, (_, i) => `motion:${i + 1}`), ...(wantsVoice ? ['voice'] : [])],
+      after: [
+        ...Array.from({ length: frameCount }, (_, i) => `motion:${i + 1}`),
+        ...(hasDialogue ? dialogueShots.map((i) => `voice:${i}`) : (wantsVoice && !wantsLip ? ['voice'] : [])),
+        ...(perShotLip ? dialogueShots.map((i) => `lipsync:${i}`) : []),
+      ],
+      silentForLipsync: wantsLip,
     });
+
+    if (wantsLip) {
+      stages.push({
+        key: 'lipsync', stage: 'lipsync', runner: runner('lipsync'), label: 'Syncing the lips to the voice', step: step++,
+        after: ['assemble', 'voice'],
+        lipsyncTier,
+        meter: { metric: 'credits', amount: creditCostFor({ stage: 'lipsync', lipsyncTier }) },
+      });
+    }
   }
 
-  const copyAfter = (kind === 'reel' || kind === 'short' || kind === 'longform')
-    ? ['assemble']
+  const copyAfter = isReel
+    ? (wantsLip ? ['lipsync'] : ['assemble'])
     : Array.from({ length: frameCount }, (_, i) => `qc:${i + 1}`);
 
   stages.push({ key: 'copy', stage: 'copy', runner: runner('copy'), after: copyAfter, label: 'Writing the caption', step: step++ });
@@ -218,7 +270,12 @@ async function enqueueFreshStillPass(client, { tenantId, projectId, proj }) {
       stage: 'qc', runner: runner('qc'), priority: 100,
       depends_on: [stillJob.id], step_index: step, step_total: 0,
       label: `Checking photo ${sh.seq} (new)`,
-      payload: { avatar_id: proj.avatar_id },
+      // subject_type so a character's QC takes the CLIP/whole-image branch
+      // instead of rejecting every frame for having no face; lora_id so the
+      // reference embedding is loaded rather than falling to the uncalibrated
+      // floor. The main createShoot path already carries both — this regen path
+      // had been passing avatar_id alone.
+      payload: { avatar_id: proj.avatar_id, lora_id: proj.lora_id, subject_type: proj.subject_type },
     });
     newIds.push(stillJob.id, qcJob.id);
   }
@@ -249,6 +306,7 @@ const Orchestrator = {
     brief = {}, shots = [], scene = {}, scenes = null, tier = 'free',
     clipSeconds = SECONDS_PER_CLIP, idempotencyKey = null, intent = 'cloud',
     resolution = '480p', reviewStills = null, candidatesPerShot = null,
+    cast = null,
   }) {
     if (!tenantId) throw Object.assign(new Error('tenantId is required'), { status: 400 });
     if (!avatarId) throw Object.assign(new Error('avatarId is required'), { status: 400 });
@@ -306,12 +364,14 @@ const Orchestrator = {
       // before quota is spent.
       const { rows: avatarRows } = await client.query(
         `SELECT a.*, l.id AS lora_id, lp.avatar_id AS has_look_profile,
-                sp.avatar_id AS has_style_profile, c.verified AS consent_verified
+                sp.avatar_id AS has_style_profile, c.verified AS consent_verified,
+                att.id AS attestation_active
            FROM avatars a
            LEFT JOIN avatar_loras   l  ON l.avatar_id = a.id AND l.active
            LEFT JOIN look_profiles  lp ON lp.avatar_id = a.id
            LEFT JOIN style_profiles sp ON sp.avatar_id = a.id
            LEFT JOIN consent_records c ON c.id = a.consent_record_id
+           LEFT JOIN character_attestations att ON att.id = a.attestation_id AND att.active
           WHERE a.id = $1 AND (
                   a.tenant_id = $2
                OR (a.is_catalogue AND EXISTS (
@@ -335,6 +395,36 @@ const Orchestrator = {
           { status: 403 }
         );
       }
+      // A character built from an uploaded image needs an active rights
+      // attestation (mode 3). A template-origin character is never gated.
+      if (avatar.subject_type === 'character' && avatar.character_source === 'upload' && !avatar.attestation_active) {
+        throw Object.assign(
+          new Error('This character was built from an uploaded image and has no active rights attestation'),
+          { status: 403, code: 'ATTESTATION_REQUIRED' }
+        );
+      }
+
+      // ── The cast (multi-character stories, shot-reverse-shot) ─────────────
+      // The lead is always cast member 'lead' (validated above). A story may add
+      // supporting members from the tenant's own avatars OR the catalogue;
+      // StoryCast runs the same LoRA/profile/gate checks for each, so a co-star
+      // that is not ready refuses the whole shoot before any spend. No cast →
+      // castByKey holds only the lead and every shot is the lead: identical to
+      // the single-character path. See claude/scope-multi-character-story.md.
+      const leadEntry = {
+        key: 'lead', role: 'lead', avatarId,
+        loraId: avatar.lora_id, subjectType: avatar.subject_type,
+        voiceProvider: avatar.voice_provider || null, voiceId: avatar.voice_id || null,
+        name: avatar.name, slug: avatar.slug,
+      };
+      const castByKey = new Map([['lead', leadEntry]]);
+      if (Array.isArray(cast) && cast.length) {
+        const extra = cast.filter((m) => m && String(m.key) !== 'lead' && Number(m.avatarId) !== Number(avatarId));
+        if (extra.length) {
+          const resolved = await StoryCast.resolve(client, { tenantId, members: extra });
+          for (const [k, v] of resolved.byKey) castByKey.set(k, v);
+        }
+      }
 
       // A voiceover is opt-in: scheduled only when the brief carries an explicit
       // spoken line AND the avatar has a locked voice AND a TTS provider is
@@ -342,13 +432,43 @@ const Orchestrator = {
       // no intended narration — it stays a silent clip rather than failing on a
       // voice stage. The concept/hook are NOT treated as a spoken line.
       const spokenLine = brief && (brief.script || brief.voiceover);
+      const voiceProvider = avatar.voice_provider || 'elevenlabs';
       const wantsVoice = Boolean(
         spokenLine && String(spokenLine).trim() &&
-        avatar.voice_id &&
-        (avatar.voice_provider || 'elevenlabs') === 'elevenlabs' &&
-        process.env.ELEVENLABS_API_KEY
+        avatar.voice_id && (
+          (voiceProvider === 'elevenlabs' && process.env.ELEVENLABS_API_KEY) ||
+          voiceProvider === 'indicf5' ||
+          (voiceProvider === 'sarvam' && process.env.SARVAM_API_KEY)
+        )
       );
-      const { stages, stepTotal } = planFor({ kind, frameCount: frameTotal, clipSeconds, intent, resolution, wantsVoice });
+      // Lipsync (T30): opt-in per shoot via brief.lipsync; needs a voice for its
+      // audio. Tier picks the fal endpoint (budget LatentSync by default).
+      const wantsLipsync = wantsVoice && Boolean(brief && brief.lipsync);
+      const bestEffort = Boolean(brief && brief.best_effort);
+      const lipsyncTier = ['budget', 'premium', 'max'].includes(brief && brief.lipsync_tier)
+        ? brief.lipsync_tier : 'budget';
+      // ── Per-shot dialogue (Phase 2a) ─────────────────────────────────────
+      // A shot voices its line in ITS speaker's voice, muxed onto its own clip.
+      // A shot qualifies only if it has a line AND its on-screen character has a
+      // usable voice — a lineless or voiceless shot stays silent rather than
+      // failing the shoot. Indices are GLOBAL shot seq (1..frameTotal), matching
+      // still:i / motion:i.
+      const voiceUsable = (m) => Boolean(m && m.voiceId && (
+        (m.voiceProvider === 'elevenlabs' && process.env.ELEVENLABS_API_KEY) ||
+        m.voiceProvider === 'indicf5' ||
+        (m.voiceProvider === 'sarvam' && process.env.SARVAM_API_KEY)
+      ));
+      const dialogueShots = [];
+      {
+        let gi = 0;
+        for (const sc of sceneList) for (const rawShot of sc.shots) {
+          gi += 1;
+          const ss = rawShot || {};
+          const m = castByKey.get(ss.character ? String(ss.character) : 'lead');
+          if (ss.dialogue && String(ss.dialogue).trim() && voiceUsable(m)) dialogueShots.push(gi);
+        }
+      }
+      const { stages, stepTotal } = planFor({ kind, frameCount: frameTotal, clipSeconds, intent, resolution, wantsVoice, wantsLipsync, lipsyncTier, dialogueShots });
 
       // ── Vocabulary clamp ─────────────────────────────────────────────────
       // Every shoot passes through here, so this is where a shot/scene value is
@@ -383,6 +503,7 @@ const Orchestrator = {
       // shots flattened under them in order. Shot `seq` is GLOBAL across the reel
       // so the stitch order is stable and filenames never collide between scenes.
       const shotRows = [];
+      const shotCast = [];  // resolved cast member per shot, parallel to shotRows
       let firstSceneId = null;
       let sceneSeq = 0;
       for (const sc of sceneList) {
@@ -396,27 +517,42 @@ const Orchestrator = {
         if (!firstSceneId) firstSceneId = sceneRow.id;
         for (const rawShot of sc.shots) {
           const s = rawShot || {};
+          // Which cast member is in this shot (shot-reverse-shot: exactly one).
+          // A shot names a cast key; default the lead. An unknown key is a
+          // caller error, not a silent mis-cast.
+          const memberKey = s.character ? String(s.character) : 'lead';
+          const member = castByKey.get(memberKey);
+          if (!member) {
+            throw Object.assign(new Error(`Shot references unknown cast member "${memberKey}"`), { status: 400, code: 'UNKNOWN_CAST' });
+          }
+          const hasLine = Boolean(s.dialogue && String(s.dialogue).trim());
           const { rows: [shot] } = await client.query(
             `INSERT INTO studio_shots
                (scene_id, seq, framing, light_direction, light_quality,
                 expression_key, expression_intensity, wardrobe_key, pose_key,
-                duration_seconds, advanced_append)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+                duration_seconds, advanced_append, dialogue, speaker_avatar_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
             [sceneRow.id, shotRows.length + 1,
              clampVocab('framing', s.framing, 'medium'), clampVocab('light_direction', s.light_direction, 'camera_left'), clampVocab('light_quality', s.light_quality, 'soft'),
              clampVocab('expression', s.expression_key, 'neutral'), s.expression_intensity || 'medium',
              s.wardrobe_key || null, s.pose_key || null,
              kind === 'post' || kind === 'carousel' ? null : clipSeconds,
-             s.advanced_append || null]
+             s.advanced_append || null,
+             // Dialogue + speaker are stored now (Phase 1) even though voicing a
+             // multi-speaker conversation is Phase 2; the speaker is the shot's
+             // on-screen character.
+             hasLine ? String(s.dialogue).trim() : null,
+             hasLine ? member.avatarId : null]
           );
-          // v1 writes exactly one character per shot. Two rows here means a
-          // two-shot: expensive, fragile, and QC'd per face.
+          // Shot-reverse-shot: exactly one character per shot, so one row —
+          // whichever cast member this shot casts (not always the lead).
           await client.query(
             `INSERT INTO studio_shot_characters (shot_id, avatar_id, lora_id, role)
              VALUES ($1,$2,$3,'subject')`,
-            [shot.id, avatarId, avatar.lora_id]
+            [shot.id, member.avatarId, member.loraId]
           );
           shotRows.push(shot);
+          shotCast.push(member);
         }
       }
 
@@ -459,13 +595,63 @@ const Orchestrator = {
       // until a human has seen the stills.
       const isMotionKind = kind === 'reel' || kind === 'short' || kind === 'longform';
       const gate = reviewStills === null ? isMotionKind : Boolean(reviewStills);
-      const HELD_STAGES = new Set(['motion', 'voice', 'assemble', 'copy']);
+      const HELD_STAGES = new Set(['motion', 'voice', 'assemble', 'copy', 'lipsync']);
 
       // ── The job graph ──────────────────────────────────────────────────────
       const byKey = new Map();
+
+      // Prompt is fanned out ONE JOB PER DISTINCT CAST MEMBER (shot-reverse-shot):
+      // each still job depends on its character's prompt job, and promptStage
+      // already scopes its work to the still jobs that depend on it — so each
+      // prompt job builds only its own character's shots, from its own identity/
+      // style, with no change to the stage itself. A single-character shoot has
+      // one distinct avatar → one prompt job → identical to before.
+      const memberByAvatar = new Map();
+      for (const m of shotCast) memberByAvatar.set(m.avatarId, m);
+      memberByAvatar.set(leadEntry.avatarId, leadEntry);
+      const distinctAvatarIds = [];
+      const seenAvatar = new Set();
+      for (const m of shotCast) if (!seenAvatar.has(m.avatarId)) { seenAvatar.add(m.avatarId); distinctAvatarIds.push(m.avatarId); }
+      // The shoot-level voice stage (Phase 1: the lead's voice) waits on 'prompt';
+      // guarantee the lead has a prompt job even if it appears in no shot.
+      if (wantsVoice && !seenAvatar.has(leadEntry.avatarId)) { seenAvatar.add(leadEntry.avatarId); distinctAvatarIds.push(leadEntry.avatarId); }
+
+      const promptSpec = stages.find((sp) => sp.stage === 'prompt');
+      const promptJobByAvatar = new Map();
+      const isMultiCast = distinctAvatarIds.length > 1;
+      for (const avId of distinctAvatarIds) {
+        const m = memberByAvatar.get(avId);
+        const pjob = await RenderJob.enqueueTx(client, {
+          tenant_id: tenantId, project_id: project.id, shot_id: null,
+          stage: 'prompt', runner: promptSpec.runner, priority: tier === 'paid' ? 50 : 100,
+          depends_on: [], step_index: promptSpec.step, step_total: stepTotal,
+          label: isMultiCast ? `Working out ${m.name}'s shots` : promptSpec.label,
+          status: 'queued',
+          payload: {
+            avatar_id: m.avatarId, lora_id: m.loraId, scene_id: firstSceneId,
+            subject_type: m.subjectType, quality, candidates, resolution,
+          },
+          idempotency_key: idempotencyKey ? `${idempotencyKey}:prompt:${avId}` : null,
+        });
+        promptJobByAvatar.set(avId, pjob.id);
+      }
+      // 'prompt' in byKey resolves to the LEAD's prompt job, so any shoot-level
+      // stage that waits on 'prompt' (voice) depends on it.
+      byKey.set('prompt', promptJobByAvatar.get(leadEntry.avatarId) || promptJobByAvatar.values().next().value);
+
       for (const spec of stages) {
+        if (spec.stage === 'prompt') continue;  // fanned out per cast member above
         const shotIndex = spec.key.includes(':') ? Number(spec.key.split(':')[1]) : null;
         const shot = shotIndex ? shotRows[shotIndex - 1] : null;
+        // A shot stage uses the shot's cast member; a shoot-level stage (voice,
+        // assemble, copy, lipsync) uses the lead.
+        const member = shotIndex ? shotCast[shotIndex - 1] : leadEntry;
+
+        // A still waits on ITS character's prompt job, not the generic key.
+        let dependsOn = (spec.after || []).map((k) => byKey.get(k)).filter(Boolean);
+        if (spec.stage === 'still') {
+          dependsOn = [promptJobByAvatar.get(member.avatarId)].filter(Boolean);
+        }
 
         const job = await RenderJob.enqueueTx(client, {
           tenant_id: tenantId,
@@ -474,22 +660,25 @@ const Orchestrator = {
           stage: spec.stage,
           runner: spec.runner,
           priority: tier === 'paid' ? 50 : 100,
-          depends_on: (spec.after || []).map((k) => byKey.get(k)).filter(Boolean),
+          depends_on: dependsOn,
           step_index: spec.step,
           step_total: stepTotal,
           label: spec.label,
           status: (gate && HELD_STAGES.has(spec.stage)) ? 'held' : 'queued',
           payload: {
-            avatar_id: avatarId,
-            lora_id: avatar.lora_id,
+            avatar_id: member.avatarId,
+            lora_id: member.loraId,
             scene_id: shot ? shot.scene_id : firstSceneId,
-            subject_type: avatar.subject_type,
+            subject_type: member.subjectType,
             quality,
             candidates,
             clip_seconds: spec.seconds ?? null,
             resolution,
             _reserved: spec.meter?.metric === 'credits' ? Number(spec.meter.amount || 0) : 0,
             _from_credits: spec.meter?.metric === 'credits' ? shareOfCredits(spec.meter.amount) : 0,
+            lipsync_tier: spec.lipsyncTier || null,
+            _lipsync: spec.silentForLipsync || false,
+            _best_effort: bestEffort,
           },
           idempotency_key: idempotencyKey ? `${idempotencyKey}:${spec.key}` : null,
         });
@@ -503,7 +692,7 @@ const Orchestrator = {
         scene_id: firstSceneId,
         scene_count: sceneSeq,
         shots: shotRows,
-        job_count: byKey.size,
+        job_count: promptJobByAvatar.size + (stages.length - 1),
         step_total: stepTotal,
         reserved: { credits: totalCredits },
       };

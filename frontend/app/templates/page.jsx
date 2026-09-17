@@ -30,6 +30,7 @@ export default function Templates() {
     <>
       <div className="topbar">
         <div className="crumb"><b>Templates</b></div>
+        <Link className="btn sm" href="/templates/extract">Extract a format →</Link>
       </div>
       <div className="page">
         <Resource state={templates}>

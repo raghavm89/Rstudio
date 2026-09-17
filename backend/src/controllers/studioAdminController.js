@@ -593,8 +593,44 @@ async function approveConsent(req, res) {
   res.json({ verified: true });
 }
 
+// ── Mode-3 character uploads: the rights-attestation log + the takedown path ──
+// The IT-Rules answer to "a user uploaded someone else's mascot" is a working
+// notice-and-takedown, inside the 3-hour window. This is the admin side of it:
+// see every character built from an upload, and disable one on a complaint.
+async function listCharacterAttestations(_req, res) {
+  const { rows } = await pool.query(
+    `SELECT ca.id, ca.avatar_id, ca.tenant_id, ca.user_id, ca.upload_ref, ca.source_hash,
+            ca.attestation_text_version, ca.ip, ca.active, ca.created_at,
+            ca.taken_down_at, ca.taken_down_reason,
+            a.name AS avatar_name, a.slug, a.status AS avatar_status, a.character_source
+       FROM character_attestations ca
+       JOIN avatars a ON a.id = ca.avatar_id
+      ORDER BY ca.active DESC, ca.created_at DESC
+      LIMIT 200`);
+  res.json({ attestations: rows });
+}
+
+async function takedownCharacter(req, res) {
+  const CharacterAttestation = require('../services/studio/characterAttestation');
+  const attestationId = Number(req.params.id);
+  const reason = (req.body && req.body.reason) || null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await CharacterAttestation.takedown(client, { attestationId, by: req.user.id, reason });
+    await client.query('COMMIT');
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(err.status || 500).json({ error: err.message, code: err.code || 'TAKEDOWN_FAILED' });
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   overview, listTenants, getTenant, money, jobs, requeueJob, grantCredits, query, auditLog,
   listCatalogue, addCatalogue, removeCatalogue,
   listConsents, approveConsent,
+  listCharacterAttestations, takedownCharacter,
 };

@@ -19,6 +19,7 @@ const pool = require('../../config/db');
 const Orchestrator = require('./orchestrator');
 const { pickModel } = require('./anthropicModel');
 const PlanFeedback = require('./planFeedback');
+const StoryCast = require('./storyCast');
 
 const FRAMING = ['close', 'medium', 'wide', 'full'];
 const LIGHT_DIRECTION = ['camera_left', 'camera_right', 'front', 'front_left', 'front_right', 'back_left', 'back_right', 'top'];
@@ -149,7 +150,9 @@ const REVIEWER_HEAD = [
   'Output ONLY the improved JSON object - no prose, no markdown fences, no commentary.',
 ];
 
-function bodyLines(motion, n, v) {
+function bodyLines(motion, n, v, castRoster = null) {
+  const isConversation = Boolean(motion && castRoster && castRoster.length > 1);
+  const castKeys = isConversation ? castRoster.map((m) => m.key) : null;
   const enums = '"framing": "' + v.framing.join('|') + '", "light_direction": "' + v.light_direction.join('|') + '", "light_quality": "' + v.light_quality.join('|') + '", "expression_key": "' + v.expression.join('|') + '", "expression_intensity": "' + v.intensity.join('|') + '"';
   const tail = 'Use ONLY the allowed enum values for framing, light_direction, light_quality, expression_key and expression_intensity. Put anything descriptive into the text fields (location_text, wardrobe_text, action).';
   const exprGuide = v.expression_gloss ? ('Expression options - pick the key whose meaning fits the moment: ' + v.expression_gloss + '.') : null;
@@ -158,9 +161,10 @@ function bodyLines(motion, n, v) {
       'Shape:',
       '{',
       '  "brief": { "concept": "one vivid sentence", "hook": "3-6 word on-screen hook", "caption_angle": "how the caption should read" },',
-      '  "scenes": [ { "time_of_day": "' + v.time_of_day.join('|') + '", "location_text": "where she is plus any equipment or props, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase", ' + enums + ', "action": "what she is DOING in the photo: the exact posture and how she interacts with equipment, props or the subject (for example: gripping the lat-pulldown bar overhead and pulling it toward her chest, side view, back engaged). Not merely standing and posing unless the idea is purely aesthetic", "motion": "how she MOVES in the video: the movement to animate (for example: she pulls the bar down to her chest, then lets it rise back up). For a talking scene: she speaks to the camera with natural hand gestures" } ]',
+      '  "scenes": [ { "time_of_day": "' + v.time_of_day.join('|') + '", "location_text": "where she is plus any equipment or props, one concrete phrase", "wardrobe_text": "what she is wearing, one concrete phrase", ' + enums + (isConversation ? ', "character": "' + castKeys.join('|') + '", "dialogue": "the line THIS scene\'s character speaks, one natural spoken sentence in the idea\'s language (Hindi / Hinglish / English as fits)"' : '') + ', "action": "what the person in this scene is DOING in the photo: the exact posture and how they interact with equipment, props or the subject (for example: gripping the lat-pulldown bar overhead and pulling it toward her chest, side view, back engaged). Not merely standing and posing unless the idea is purely aesthetic", "motion": "how they MOVE in the video: the movement to animate. For a talking scene: they speak to the camera with natural hand gestures" } ]',
       '}',
       'First identify the content TYPE from the idea: a how-to or demonstration (SHOW the action), a talking explainer (she addresses the camera), or a lifestyle or aesthetic piece (mood and looks). Direct each scene like a real person on set: what she is DOING, her posture, and how she interacts with equipment, props or the subject.',
+      (isConversation ? 'This is a MULTI-CHARACTER CONVERSATION. Cast: ' + castRoster.map((m) => '"' + m.key + '" = ' + m.name).join(', ') + '. SHOT-REVERSE-SHOT: each scene shows exactly ONE character on screen. Set "character" to that character\'s key and "dialogue" to the line they speak. ALTERNATE characters across scenes so the scenes read as a real back-and-forth with a beginning, middle and end. Every scene MUST set both "character" (one of the cast keys) and "dialogue". Never change any character\'s face or identity.' : null),
       'Choose framing to fit the content: for a physical demonstration use full or wide so the action is visible (a close-up cannot show an exercise); for a talking explainer use medium facing the camera; for lifestyle, vary it.',
       (n === 1
         ? 'Produce exactly 1 scene that carries the idea, with a real action and a real motion.'
@@ -183,15 +187,23 @@ function bodyLines(motion, n, v) {
   ].filter(Boolean);
 }
 
-function buildSystem(kind, motion, n, v) {
-  return DIRECTOR_HEAD.concat(bodyLines(motion, n, v)).join('\n');
+function buildSystem(kind, motion, n, v, castRoster = null) {
+  return DIRECTOR_HEAD.concat(bodyLines(motion, n, v, castRoster)).join('\n');
 }
 
-function buildReviewSystem(kind, motion, n, v) {
-  return REVIEWER_HEAD.concat(bodyLines(motion, n, v)).join('\n');
+function buildReviewSystem(kind, motion, n, v, castRoster = null) {
+  return REVIEWER_HEAD.concat(bodyLines(motion, n, v, castRoster)).join('\n');
 }
 
-async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, frameCount, tier = 'free', intent = 'cloud', userId = null } = {}, deps = {}) {
+// Coverage partner framing (T40, Finding 4): pair a wide/establishing shot with a
+// close (detail), and a close with a wide (establishing), so a scene reads as
+// coverage of ONE moment rather than a new beat.
+function coverageFraming(f) {
+  const pair = { wide: 'close', full: 'close', medium: 'close', close: 'wide' };
+  return pair[f] || 'close';
+}
+
+async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, frameCount, tier = 'free', intent = 'cloud', userId = null, coverage = false, cast = null } = {}, deps = {}) {
   if (!tenantId) throw new PlanError('No tenant on this account', { status: 403 });
   if (!avatarId) throw new PlanError('avatar_id is required');
   if (!idea || !String(idea).trim()) throw new PlanError('Describe the video first.');
@@ -205,10 +217,29 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   const llm = deps.llm || getAnthropic();
   if (!llm) throw new PlanError('Idea planning needs an LLM — set ANTHROPIC_API_KEY in the backend .env (the caption writer needs it too).', { status: 503, code: 'NO_LLM' });
 
+  // ── The cast (multi-character conversations) ─────────────────────────────
+  // The lead is always cast key 'lead'. Supporting members (own or catalogue
+  // avatars) are validated up front so an unusable co-star fails at plan time,
+  // before the user reviews a storyboard they could not generate. No cast → the
+  // roster is just the lead and the planner behaves exactly as before.
+  const castIn = (Array.isArray(cast) ? cast : [])
+    .filter((m) => m && Number.isFinite(Number(m.avatarId)) && String(m.key || '').trim()
+      && String(m.key) !== 'lead' && Number(m.avatarId) !== Number(avatarId))
+    .map((m) => ({ key: String(m.key), avatarId: Number(m.avatarId) }));
+  const castRoster = [{ key: 'lead', name: av.name, subjectType: av.subject_type }];
+  if (castIn.length) {
+    let resolved;
+    try { resolved = await StoryCast.resolve(pool, { tenantId, members: castIn }); }
+    catch (e) { throw new PlanError(e.message, { status: e.status || 409, code: e.code || 'BAD_CAST' }); }
+    for (const m of resolved.list) castRoster.push({ key: m.key, name: m.name, subjectType: m.subjectType });
+  }
+  const isConversation = castRoster.length > 1;
+  const castKeys = castRoster.map((m) => m.key);
+
   const nUnits = shotsForKind(kind, frameCount);
   const motion = MOTION.has(kind);
   const vocab = deps.vocab || await loadPlanVocab(avatarId);
-  const system = buildSystem(kind, motion, nUnits, vocab);
+  const system = buildSystem(kind, motion, nUnits, vocab, castRoster);
   // Step 2 of the self-learning loop: this creator's best past APPROVED plans,
   // fed in as taste examples. Both the Director and the Reviewer see them (the
   // reviewer's message is built from `user`), so the reviewer can't refine away
@@ -225,6 +256,13 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
       '',
       'Past plans THIS creator approved before - their proven taste and structure. Learn the patterns (the kinds of settings and wardrobe, how the actions are written, the framing choices); do NOT copy them, adapt to the idea above:',
       JSON.stringify(exemplars)
+    );
+  }
+  if (isConversation) {
+    userLines.push(
+      '',
+      'Cast (multi-character conversation): ' + castRoster.map((m) => '"' + m.key + '" = ' + m.name).join(', ') + '.',
+      'Assign each scene to ONE character (its "character" key) and write that character\'s spoken "dialogue"; alternate speakers so the scenes are a conversation.'
     );
   }
   const user = userLines.join('\n');
@@ -245,7 +283,7 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   // STUDIO_PLAN_REVIEW=off.
   if (process.env.STUDIO_PLAN_REVIEW !== 'off') {
     const rounds = Math.max(1, Math.min(3, Number(process.env.STUDIO_PLAN_REVIEW_ROUNDS) || 3));
-    const reviewSystem = buildReviewSystem(kind, motion, nUnits, vocab);
+    const reviewSystem = buildReviewSystem(kind, motion, nUnits, vocab, castRoster);
     const reviewModel = deps.reviewModel || await pickModel(llm, process.env.STUDIO_REVIEW_MODEL, { prefer: 'opus' });
     const contentKey = (o) => JSON.stringify(motion ? (o && o.scenes) : (o && o.shots));
     for (let round = 0; round < rounds; round += 1) {
@@ -271,14 +309,8 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
   if (motion) {
     // Each scene = its own place / outfit / time + one shot; stitched in order.
     const raw = Array.isArray(parsed.scenes) ? parsed.scenes : [];
-    scenesOut = raw.slice(0, nUnits).map((sc) => ({
-      time_of_day: oneOf(sc && sc.time_of_day, vocab.time_of_day, 'afternoon'),
-      continuity: {
-        location_text: scrub(clip(sc && sc.location_text, 300)),
-        wardrobe_text: scrub(clip(sc && sc.wardrobe_text, 300)),
-        motion_text: scrub(clip(sc && sc.motion, 300)) || undefined,
-      },
-      shots: [{
+    scenesOut = raw.slice(0, nUnits).map((sc) => {
+      const primary = {
         framing: oneOf(sc && sc.framing, vocab.framing, 'medium'),
         light_direction: oneOf(sc && sc.light_direction, vocab.light_direction, 'camera_left'),
         light_quality: oneOf(sc && sc.light_quality, vocab.light_quality, 'soft'),
@@ -286,8 +318,29 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
         expression_intensity: oneOf(sc && sc.expression_intensity, INTENSITY, 'medium'),
         pose_key: scrub(clip(sc && sc.action, 240)) || null,
         advanced_append: undefined,
-      }],
-    }));
+      };
+      if (isConversation) {
+        // Shot-reverse-shot: this scene features ONE cast member speaking one line.
+        primary.character = oneOf(sc && sc.character, castKeys, 'lead');
+        primary.dialogue = scrub(clip(sc && sc.dialogue, 240)) || null;
+      }
+      const continuity = {
+        location_text: scrub(clip(sc && sc.location_text, 300)),
+        wardrobe_text: scrub(clip(sc && sc.wardrobe_text, 300)),
+        motion_text: scrub(clip(sc && sc.motion, 300)) || undefined,
+      };
+      const shots = [primary];
+      if (coverage) {
+        // Coverage (T40): a second angle of the SAME moment — a complementary
+        // framing on the same action, expression and light. A shared per-scene
+        // seed (below) makes the two shots render the same instant, reframed;
+        // promptStage reads continuity.seed and gives the scene's shots one seed.
+        const partner = oneOf(coverageFraming(primary.framing), vocab.framing, primary.framing);
+        if (partner !== primary.framing) shots.push({ ...primary, framing: partner, dialogue: null });
+        continuity.seed = Math.floor(Math.random() * 2 ** 31);
+      }
+      return { time_of_day: oneOf(sc && sc.time_of_day, vocab.time_of_day, 'afternoon'), continuity, shots };
+    });
     // If the model returned fewer scenes than asked, don't pad with a BLANK scene
     // (that renders her in a void) - clone the last real scene so the reel simply
     // holds on a real setting. Only fall back to a bare default if there are none.
@@ -346,7 +399,7 @@ async function plan({ tenantId, avatarId, idea, kind = 'reel', clipSeconds = 5, 
     light_quality: vocab.light_quality, expression: vocab.expression,
     time_of_day: vocab.time_of_day, intensity: vocab.intensity,
   };
-  return { brief, kind, clipSeconds, scenes, options };
+  return { brief, kind, clipSeconds, scenes, options, cast: castIn };
 }
 
 async function optionsForAvatar(avatarId) {
@@ -357,4 +410,4 @@ async function optionsForAvatar(avatarId) {
   };
 }
 
-module.exports = { plan, optionsForAvatar, PlanError, FRAMING, LIGHT_DIRECTION, LIGHT_QUALITY, EXPRESSION, TIME_OF_DAY };
+module.exports = { plan, optionsForAvatar, buildSystem, PlanError, FRAMING, LIGHT_DIRECTION, LIGHT_QUALITY, EXPRESSION, TIME_OF_DAY };

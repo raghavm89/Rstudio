@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { FaceEmbedder } = require('./faceEmbed');
+const { makeEmbedder } = require('./embedderFactory');
 
 /**
  * Measuring the faces in a seed set.
@@ -51,7 +51,7 @@ async function runEmbed(job) {
   }
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `embed-${job.id}-`));
-  const embedder = new FaceEmbedder({});
+  const embedder = makeEmbedder(job.payload?.subject_type);
   const embeddings = [];
   // Collected rather than thrown on the first one: if three of eighteen frames
   // are unusable somebody wants all three now, not to run this twice more

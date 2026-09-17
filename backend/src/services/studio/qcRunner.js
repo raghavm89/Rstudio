@@ -38,13 +38,20 @@ const QcRunner = {
     return this._ready.ok ? null : this._ready.error;
   },
 
-  /** One long-lived embedder, created lazily (loading insightface costs seconds). */
-  _embedder() {
-    if (!this._emb) {
-      const { FaceEmbedder } = require("../../../worker/faceEmbed");
-      this._emb = new FaceEmbedder();
-    }
-    return this._emb;
+  /**
+   * One long-lived embedder PER subject_type, created lazily.
+   *
+   * A person is measured by insightface, a character by CLIP (embedderFactory
+   * decides which). Both cost seconds to load, so each is cached and reused —
+   * but they are separate processes with separate models, so a shoot that mixes
+   * people and characters keeps one of each rather than reloading on every job.
+   */
+  _embedder(subjectType) {
+    if (!this._embs) this._embs = new Map();
+    const { makeEmbedder, subjectKey } = require("../../../worker/embedderFactory");
+    const key = subjectKey(subjectType);
+    if (!this._embs.has(key)) this._embs.set(key, makeEmbedder(key));
+    return this._embs.get(key);
   },
 
   async tick({ workerId = DEFAULTS.workerId, leaseSeconds = DEFAULTS.leaseSeconds, runners = DEFAULTS.runners, embedder = null } = {}) {
@@ -57,7 +64,7 @@ const QcRunner = {
     }
     if (!job) return null;
 
-    const emb = embedder || this._embedder();
+    const emb = embedder || this._embedder(job.payload?.subject_type);
     try {
       const report = await runQc(job, { embedder: emb });
       return await JobResult.settle(job.id, workerId, report);
@@ -126,8 +133,10 @@ const QcRunner = {
     this._stopping = true;
     if (this._timer) clearTimeout(this._timer);
     this._timer = null;
-    if (this._emb && this._emb.stop) this._emb.stop();
-    this._emb = null;
+    if (this._embs) {
+      for (const [, emb] of this._embs) if (emb && emb.stop) emb.stop();
+      this._embs = null;
+    }
   },
 };
 

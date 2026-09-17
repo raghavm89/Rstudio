@@ -2,6 +2,7 @@
 
 const pool = require('../config/db');
 const ContentTemplate = require('../services/studio/contentTemplate');
+const FormatExtract = require('../services/studio/formatExtract');
 const StudioUsage = require('../models/studioUsage');
 
 /** Template errors carry their own status; anything else is a real error. */
@@ -82,4 +83,15 @@ exports.remove = async (req, res) => {
 exports.publish = async (req, res) => {
   try { const t = await ContentTemplate.publish(pool, req.params.id); return res.json({ template: t }); }
   catch (err) { return fail(res, err); }
+};
+
+// POST /api/studio/templates/extract — turn a described format into a reusable
+// template structure (T31). Returns the template-shaped object UNSAVED; the
+// client reviews it and POSTs /templates to persist. Structure only — no fetch.
+exports.extract = async (req, res) => {
+  try {
+    const { description, kind = 'reel', clip_seconds = 5 } = req.body || {};
+    const out = await FormatExtract.extract({ description, kind, clipSeconds: Number(clip_seconds) || 5 });
+    return res.json({ template: out });
+  } catch (err) { return fail(res, err); }
 };

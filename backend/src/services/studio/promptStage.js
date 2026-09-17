@@ -203,7 +203,11 @@ const PromptStage = {
             wardrobeText: (shot.scene_continuity && shot.scene_continuity.wardrobe_text) || '',
             quality,
             backend,
-            seed: seedFor(job.id, shot.id, 0),
+            // Coverage (T40): shots that share a scene seed render the SAME
+            // instant, reframed. Otherwise a per-shot seed keeps a set varied.
+            seed: (shot.scene_continuity && shot.scene_continuity.seed != null)
+              ? (Number(shot.scene_continuity.seed) >>> 0) % 2 ** 31
+              : seedFor(job.id, shot.id, 0),
             filenamePrefix: `studio/${row.slug}/${job.project_id}/shot${shot.seq}`,
           });
         } catch (err) {

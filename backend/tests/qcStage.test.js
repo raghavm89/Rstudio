@@ -20,7 +20,7 @@ function fakeDb({ candidates, motionRow }) {
   return {
     calls,
     async query(sql, params) {
-      if (/FROM studio_assets\s+WHERE project_id.*kind = 'still'\s+ORDER BY candidate_index/s.test(sql)) return { rows: candidates };
+      if (/FROM studio_assets\s+WHERE project_id.*kind = 'still'.*ORDER BY candidate_index/s.test(sql)) return { rows: candidates };
       if (/SET qc_status = \$2/.test(sql)) { calls.verdictUpdates.push(params); return { rows: [] }; }
       if (/SET selected = false WHERE shot_id/.test(sql)) { calls.selectClears += 1; return { rows: [] }; }
       if (/SET selected = true WHERE id = \$1/.test(sql)) { calls.selectSets.push(params[0]); return { rows: [] }; }

@@ -59,6 +59,12 @@ function Idea({ avatarId }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [recording, setRecording] = useState(false);
+  const [coverage, setCoverage] = useState(false);  // T40: add a close-up angle per scene
+  const [lipsync, setLipsync] = useState(false);   // T30: speak & lip-sync to the voiceover
+  const [script, setScript] = useState("");
+  const [bestEffort, setBestEffort] = useState(false); // stitch the survivors if a shot fails
+  const [castOptions, setCastOptions] = useState([]);  // other trained avatars, castable as co-stars
+  const [cast, setCast] = useState([]);                // chosen co-stars: [{ key, avatarId, name }]
 
   // The stills-per-scene ceiling depends on the plan tier — ask the server so the
   // slider can't offer more than the tier allows (the server clamps regardless).
@@ -67,6 +73,17 @@ function Idea({ avatarId }) {
       if (r && r.candidate_max) { setStillsMax(r.candidate_max); setStills((v) => Math.min(v, r.candidate_max)); }
     }).catch(() => {});
   }, []);
+
+  // Castable co-stars: this tenant's OTHER trained avatars (multi-character
+  // stories). The lead is the avatar being created for; co-stars ride on top.
+  useEffect(() => {
+    get("/avatars").then((r) => {
+      const list = (r && r.avatars) || (Array.isArray(r) ? r : []);
+      setCastOptions(list
+        .filter((a) => a && Number(a.id) !== Number(avatarId) && a.trained)
+        .map((a) => ({ key: a.slug || String(a.id), avatarId: Number(a.id), name: a.name })));
+    }).catch(() => {});
+  }, [avatarId]);
   const [transcribing, setTranscribing] = useState(false);
   const [loadingFrom, setLoadingFrom] = useState(false);
 
@@ -146,8 +163,8 @@ function Idea({ avatarId }) {
     if (!idea.trim()) { setErr("Describe the video first."); return; }
     setBusy(true);
     try {
-      const p = await post("/shoots/plan", { avatar_id: Number(avatarId), idea: idea.trim(), kind, clip_seconds: clip, ...(motion ? { frame_count: beats } : {}) });
-      setPlan({ ...p, clipSeconds: p.clipSeconds || clip, candidates: stills });
+      const p = await post("/shoots/plan", { avatar_id: Number(avatarId), idea: idea.trim(), kind, clip_seconds: clip, ...(motion ? { frame_count: beats, coverage } : {}), ...(cast.length ? { cast: cast.map((c) => ({ key: c.key, avatarId: c.avatarId })) } : {}) });
+      setPlan({ ...p, clipSeconds: p.clipSeconds || clip, candidates: stills, lipsync, script, bestEffort, cast });
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
   }
 
@@ -199,7 +216,42 @@ function Idea({ avatarId }) {
               <input type="range" min={1} max={stillsMax} value={stills} onChange={(e) => setStills(Number(e.target.value))} />
               <span style={S.clipVal}>{stills}</span>{stillsMax < 6 ? <span style={{ fontSize: 11, color: "#8a8577", marginLeft: 8 }}>max {stillsMax} on your plan</span> : null}
             </label>
-            <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} scenes` : ""} · {stills} still{stills === 1 ? "" : "s"}/scene</span>
+            <label style={S.clip}>
+              <span style={S.ctlLbl}>Coverage</span>
+              <input type="checkbox" checked={coverage} onChange={(e) => setCoverage(e.target.checked)} />
+              <span style={{ fontSize: 11, color: "#8a8577", marginLeft: 6 }}>add a close-up of each moment</span>
+            </label>
+            <label style={S.clip}>
+              <span style={S.ctlLbl}>Speak</span>
+              <input type="checkbox" checked={lipsync} onChange={(e) => setLipsync(e.target.checked)} />
+              <span style={{ fontSize: 11, color: "#8a8577", marginLeft: 6 }}>lip-sync to a voiceover</span>
+            </label>
+            <label style={S.clip}>
+              <span style={S.ctlLbl}>Resilient</span>
+              <input type="checkbox" checked={bestEffort} onChange={(e) => setBestEffort(e.target.checked)} />
+              <span style={{ fontSize: 11, color: "#8a8577", marginLeft: 6 }}>still finish if a shot fails</span>
+            </label>
+            {castOptions.length ? (
+              <div style={{ ...S.f, marginTop: 10 }}>
+                <span style={S.fl}>Co-stars — a multi-character story; each speaks in their own voice</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {castOptions.map((o) => {
+                    const on = cast.some((c) => c.avatarId === o.avatarId);
+                    return (
+                      <button type="button" key={o.avatarId}
+                        onClick={() => setCast((prev) => on ? prev.filter((c) => c.avatarId !== o.avatarId) : [...prev, o])}
+                        style={{ ...S.chip, ...(on ? S.chipOn : {}) }}>{on ? "\u2713 " : "+ "}{o.name}</button>
+                    );
+                  })}
+                </div>
+                {cast.length ? <span style={{ fontSize: 11, color: "#8a8577", marginTop: 4, display: "block" }}>The planner writes a back-and-forth between {["Lead", ...cast.map((c) => c.name)].join(", ")} — one character per shot.</span> : null}
+              </div>
+            ) : null}
+            <span style={S.total}>~{beats * clip}s{beats > 1 ? ` · ${beats} scenes` : ""} · {stills} still{stills === 1 ? "" : "s"}/scene{coverage ? " · coverage (≈2× clips)" : ""}{lipsync ? " · spoken" : ""}</span>
+            {lipsync ? (
+              <label style={{ ...S.f, marginTop: 10 }}><span style={S.fl}>Script — what she says (lip-sync needs a voiceover, and the avatar needs a locked voice)</span>
+                <textarea rows={3} value={script} onChange={(e) => setScript(e.target.value)} placeholder="Namaste! Aaj main aapko dikhati hoon…" style={S.ta2} /></label>
+            ) : null}
           </div>
         )}
       </div>
@@ -281,12 +333,15 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
   const framings = opts.framing || FRAMINGS;
   const expressions = opts.expression || EXPRESSIONS;
   const times = opts.time_of_day || TIMES;
+  const castMap = { lead: "Lead", ...Object.fromEntries((plan.cast || []).map((c) => [c.key, c.name])) };
+  const castChars = ["lead", ...(plan.cast || []).map((c) => c.key)];
+  const isConversation = (plan.cast || []).length > 0;
 
   function patchScene(i, fn) {
     setPlan((prev) => ({
       ...prev,
       scenes: prev.scenes.map((s, j) =>
-        j === i ? fn({ ...s, continuity: { ...(s.continuity || {}) }, shots: [{ ...((s.shots && s.shots[0]) || {}) }] }) : s),
+        j === i ? fn({ ...s, continuity: { ...(s.continuity || {}) }, shots: (s.shots && s.shots.length ? s.shots.map((x) => ({ ...x })) : [{}]) }) : s),
     }));
   }
   const setCont = (i, k, v) => patchScene(i, (s) => { s.continuity[k] = v; return s; });
@@ -302,7 +357,7 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
         await post(`/shoots/${plan.from_shoot}/replan`, { scenes });
         router.push(`/shoots/${plan.from_shoot}`);
       } else {
-        await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: plan.brief || {}, scenes, plan_id: plan.plan_id, candidates: plan.candidates });
+        await post("/shoots/generate", { avatar_id: Number(avatarId), kind: plan.kind, clip_seconds: plan.clipSeconds || 5, brief: { ...(plan.brief || {}), ...(plan.lipsync ? { lipsync: true, script: (plan.script || "").trim() } : {}), ...(plan.bestEffort ? { best_effort: true } : {}) }, scenes, plan_id: plan.plan_id, candidates: plan.candidates, ...(plan.cast && plan.cast.length ? { cast: plan.cast.map((c) => ({ key: c.key, avatarId: c.avatarId })) } : {}) });
         router.push("/shoots");
       }
     } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
@@ -325,6 +380,16 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
               <span style={S.sbNo}>{motion ? `Scene ${i + 1}` : `Shot ${i + 1}`}</span>
               {!plan.from_shoot && scenes.length > 1 ? <button type="button" style={S.rm} onClick={() => removeScene(i)}>Remove</button> : null}
             </div>
+            {isConversation ? (
+              <div style={S.selRow}>
+                <label style={S.sel}><span style={S.fl}>Who's in this shot</span>
+                  <select value={(s.shots && s.shots[0] && s.shots[0].character) || "lead"} onChange={(e) => setShot(i, "character", e.target.value)} style={S.selEl}>
+                    {castChars.map((k) => <option key={k} value={k}>{castMap[k] || k}</option>)}
+                  </select></label>
+                <label style={{ ...S.f, flex: 2 }}><span style={S.fl}>Their line (spoken in their voice)</span>
+                  <input value={(s.shots && s.shots[0] && s.shots[0].dialogue) || ""} onChange={(e) => setShot(i, "dialogue", e.target.value)} placeholder="what this character says\u2026" style={S.in} /></label>
+              </div>
+            ) : null}
             <label style={S.f}><span style={S.fl}>Where</span><input value={(s.continuity && s.continuity.location_text) || ""} onChange={(e) => setCont(i, "location_text", e.target.value)} style={S.in} /></label>
             <label style={S.f}><span style={S.fl}>Wardrobe</span><input value={(s.continuity && s.continuity.wardrobe_text) || ""} onChange={(e) => setCont(i, "wardrobe_text", e.target.value)} style={S.in} /></label>
             <label style={S.f}><span style={S.fl}>Action (what she is doing)</span><textarea rows={2} value={(s.shots && s.shots[0] && s.shots[0].pose_key) || ""} onChange={(e) => setShot(i, "pose_key", e.target.value)} style={S.ta2} /></label>
@@ -334,6 +399,7 @@ function Storyboard({ plan, setPlan, avatarId, onBack }) {
               <label style={S.sel}><span style={S.fl}>Expression</span><select value={(s.shots && s.shots[0] && s.shots[0].expression_key) || "soft_smile"} onChange={(e) => setShot(i, "expression_key", e.target.value)} style={S.selEl}>{expressions.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
               <label style={S.sel}><span style={S.fl}>Time</span><select value={s.time_of_day || "afternoon"} onChange={(e) => setTime(i, e.target.value)} style={S.selEl}>{times.map((f) => <option key={f} value={f}>{f}</option>)}</select></label>
             </div>
+            {motion && s.shots && s.shots.length > 1 ? <p style={{ fontSize: 12, color: "#8a8577", margin: "8px 0 0" }}>+ coverage: a {s.shots[1].framing} of the same moment</p> : null}
           </div>
         ))}
       </div>

@@ -149,7 +149,7 @@ const LoraTraining = {
       await client.query('BEGIN');
 
       const { rows: avatarRows } = await client.query(
-        'SELECT id, slug, mode, consent_record_id FROM avatars WHERE id = $1 AND tenant_id = $2',
+        'SELECT id, slug, mode, subject_type, character_source, consent_record_id FROM avatars WHERE id = $1 AND tenant_id = $2',
         [avatarId, tenantId]
       );
       const avatar = avatarRows[0];
@@ -167,6 +167,20 @@ const LoraTraining = {
           throw new TrainingError(
             'This avatar depicts a real person and has no verified consent record',
             { status: 403, code: 'CONSENT_REQUIRED' }
+          );
+        }
+      }
+
+      // Training a model from an uploaded character reference is a durable act
+      // over third-party-rights-bearing content — the attestation is checked
+      // before the weights exist, the same way consent is.
+      if (avatar.subject_type === 'character' && avatar.character_source === 'upload') {
+        const CharacterAttestation = require('./characterAttestation');
+        const rec = await CharacterAttestation.active(client, { avatarId, tenantId });
+        if (!rec) {
+          throw new TrainingError(
+            'This character was built from an uploaded image and has no active rights attestation',
+            { status: 403, code: 'ATTESTATION_REQUIRED' }
           );
         }
       }
