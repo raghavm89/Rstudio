@@ -34,6 +34,7 @@ const NAV = [
   { href: '/shoots',   label: 'Shoots' },
   { href: '/talking-head', label: 'Talking head' },
   { href: '/templates', label: 'Templates' },
+  { href: '/stories', label: 'Stories' },
   { href: '/library',  label: 'Library' },
   { section: 'Out' },
   { href: '/publish',  label: 'Publish' },

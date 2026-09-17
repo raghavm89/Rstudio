@@ -19,6 +19,35 @@ exports.list = async (req, res) => {
   res.json({ templates, categories: ContentTemplate.CATEGORY_KINDS });
 };
 
+// GET /api/studio/stories — the ready-to-go story library (multi-character
+// reels with the cast baked in). Each story carries whether its whole cast is
+// currently in the catalogue; a "coming soon" story lists but cannot be applied.
+exports.stories = async (req, res) => {
+  const stories = await ContentTemplate.listStories(pool, req.user.tenant_id);
+  res.json({ stories });
+};
+
+// POST /api/studio/templates/:id/apply-story — instantiate a story shoot. No
+// avatar_id: the cast comes from the story. Every gate/quota lives downstream.
+exports.applyStory = async (req, res) => {
+  try {
+    const result = await ContentTemplate.applyStory({
+      tenantId: req.user.tenant_id, userId: req.user.id,
+      templateId: req.params.id,
+      tier: req.user.plan_id ? 'paid' : 'free',
+      idempotencyKey: req.body?.idempotency_key || null,
+    });
+    return res.status(201).json(result);
+  } catch (err) {
+    if (err.code === StudioUsage.QUOTA_EXCEEDED) {
+      return res.status(402).json({
+        error: err.message, code: err.code, metric: err.metric, remaining: err.remaining, limit: err.limit,
+      });
+    }
+    return fail(res, err);
+  }
+};
+
 // GET /api/studio/templates/:id
 exports.get = async (req, res) => {
   const t = await ContentTemplate.get(pool, req.user.tenant_id, req.params.id);
