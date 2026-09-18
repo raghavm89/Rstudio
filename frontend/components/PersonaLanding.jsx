@@ -18,12 +18,12 @@ export default function PersonaLanding({ assets = null }) {
         <ZoqNav active="persona" />
 
         <section className="z-hero rev">
-          <Plate assets={assets} label="Aanya Kapoor · identity-locked" />
+          <Plate assets={assets} label="Rohan Mehra · identity-locked" />
           <div className="z-hero-copy">
             <span className="z-kick"><span className="dot" />LANE 01 · AI PERSONA</span>
             <h1 className="z-h1">Create your<br /><span className="a">AI creator.</span></h1>
             <p className="z-deck">
-              A human-looking avatar — a brand-new face invented for you. She keeps the
+              A human-looking avatar — a brand-new face invented for you, that keeps the
               same look across every reel and photo, so the feed feels like <b>one real person</b>.
             </p>
             <div className="z-proofbar">
@@ -59,8 +59,8 @@ export default function PersonaLanding({ assets = null }) {
           <p className="z-lead" style={{ maxWidth: 620 }}>Pick a fully-built face from the catalogue and start posting today — or invent your own. Every one is identity-locked and QC&rsquo;d on every frame.</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 18, marginTop: 24 }}>
             {[
-              { img: '/hero/rohan-mehra/cover.jpg', name: 'Rohan Mehra', tag: '28 · café owner, Mumbai' },
               { img: '/hero/poster.jpg', name: 'Aanya Kapoor', tag: '26 · product designer, Mumbai' },
+              { img: '/hero/rohan-mehra/cover.jpg', name: 'Rohan Mehra', tag: '28 · café owner, Mumbai' },
             ].map((persona) => (
               <figure key={persona.name} style={{ margin: 0, borderRadius: 14, overflow: 'hidden', background: '#161616', border: '1px solid rgba(255,255,255,.08)' }}>
                 <img src={persona.img} alt={persona.name} style={{ width: '100%', aspectRatio: '4 / 5', objectFit: 'cover', display: 'block' }} />

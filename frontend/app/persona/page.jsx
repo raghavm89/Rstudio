@@ -7,7 +7,7 @@ export const metadata = { title: 'ZoQ · Create your AI creator', description: '
 export default function Page() {
   let assets = null;
   try {
-    assets = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'public', 'hero', 'manifest.json'), 'utf8'));
+    assets = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'public', 'hero', 'rohan-mehra', 'hero-manifest.json'), 'utf8'));
   } catch {}
   return <PersonaLanding assets={assets} />;
 }
