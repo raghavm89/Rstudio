@@ -104,6 +104,9 @@ export default function Plate({ assets = null, caption = true, className = '', l
   const hasFootage = Boolean(assets?.video) && !failed;
   const stillOnly  = hasFootage && reduced;
   const live = hasFootage && !reduced;
+  // A hero with a poster but no clip (e.g. a still-only showcase set) still shows
+  // its photograph, not the empty drawn plate.
+  const posterOnly = !hasFootage && Boolean(assets && assets.poster);
 
   useEffect(() => {
     if (hasFootage) return;
@@ -191,8 +194,8 @@ export default function Plate({ assets = null, caption = true, className = '', l
       {/* `hasFootage`, not `live`: the reduced-motion still is a real frame of
           the real clip, and keying the class to `live` would put the drawn
           plate's backdrop and heavier grain behind an actual photograph. */}
-      <figure className={`lp-plate ${hasFootage ? 'has-footage' : ''}`} data-frame={frame + 1}>
-        {stillOnly ? (
+      <figure className={`lp-plate ${hasFootage || posterOnly ? 'has-footage' : ''}`} data-frame={frame + 1}>
+        {(stillOnly || posterOnly) ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img className="lp-plate-video" src={assets.poster} alt={label} />
         ) : live ? (
