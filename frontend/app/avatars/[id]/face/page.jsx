@@ -320,6 +320,9 @@ function Cull({ avatarId, initial, reload }) {
   const min = data.limits?.min ?? 12;
   const max = data.limits?.max ?? 40;
   const enough = kept.length >= min && kept.length <= max && gaps.length === 0;
+  const isTwin = avatar.mode === 'twin';
+  const twinShort = isTwin && gaps.length > 0;
+  const missingAngles = (gaps.find((g) => g.key === 'angle')?.missing) || [];
 
   return (
     <>
@@ -353,22 +356,29 @@ function Cull({ avatarId, initial, reload }) {
               {kept.length < min && ` · needs at least ${min}`}
               {kept.length > max && ` · at most ${max}`}
             </span>
-            {avatar.mode === 'twin' && (
+            {isTwin && !twinShort && (
               <button className="btn ghost" type="button" onClick={() => setAddFootage((v) => !v)}>
-                {addFootage ? 'Close' : 'Add footage'}
+                {addFootage ? 'Close' : 'Upload new video'}
               </button>
             )}
             <button className="btn" onClick={train} disabled={!kept.length}>Use these photos</button>
           </div>
         </div>
 
-        {addFootage && avatar.mode === 'twin' && (
-          <div style={{ maxWidth: 680, margin: '0 auto' }}>
-            <p className="hint" style={{ textAlign: 'center', marginTop: 4 }}>
-              Add a clip that turns the head — straight on, then left, then right, through to a
-              side profile — so the set covers every angle. New frames are added to the ones below.
-            </p>
-            <TwinSetup avatarId={avatarId} onDone={() => { setAddFootage(false); reload?.(); }} />
+        {isTwin && (twinShort || addFootage) && (
+          <div className="card" style={{ maxWidth: 720, margin: '4px auto 12px', ...(twinShort ? { borderColor: '#d9a441' } : {}) }}>
+            <div className="label">
+              {twinShort ? `${avatar.name} needs a few more angles` : 'Upload a new video'}
+            </div>
+            {twinShort && (
+              <p className="helper" style={{ marginTop: 4 }}>
+                These photos are all front-on{missingAngles.length ? ` — missing ${missingAngles.join(' and ')}` : ''}.
+                A clone trained without those angles renders a different face whenever it is asked to turn.
+                Record a new clip that slowly turns the head — straight on, then left, then right, through to a
+                side profile — and the missing angles fill in automatically as the frames land below.
+              </p>
+            )}
+            <TwinSetup avatarId={avatarId} compact onDone={() => { setAddFootage(false); reload?.(); }} />
           </div>
         )}
 
@@ -514,7 +524,7 @@ function sameOriginUpload(url) {
   try { const u = new URL(url, window.location.origin); return u.pathname.startsWith('/api/studio/') ? u.pathname + u.search : url; } catch { return url; }
 }
 
-function TwinSetup({ avatarId, onDone }) {
+function TwinSetup({ avatarId, onDone, compact = false }) {
   const [state, setState] = useState('idle');   // idle | uploading | processing | error
   const [msg, setMsg] = useState(null);
   const fileRef = useRef(null);
@@ -562,15 +572,17 @@ function TwinSetup({ avatarId, onDone }) {
   const busy = state === 'uploading' || state === 'processing';
   return (
     <div className="card prof-card" style={{ textAlign: 'left', maxWidth: 640, margin: '18px auto 0' }}>
-      <div className="label">Two steps</div>
-      <ol className="helper" style={{ paddingLeft: 18, lineHeight: 1.8 }}>
-        <li><b>Consent</b> — <Link className="lnk" href={`/avatars/${avatarId}/clone`}>record it on the clone page →</Link></li>
-        <li><b>Give it footage to learn from.</b> Upload a video of yourself — ideally a minute of varied,
-          front-facing footage (a few angles, distances and expressions) for the best likeness. We check it
-          matches your consent video, then build the training set from it.</li>
-      </ol>
+      {!compact && (<>
+        <div className="label">Two steps</div>
+        <ol className="helper" style={{ paddingLeft: 18, lineHeight: 1.8 }}>
+          <li><b>Consent</b> — <Link className="lnk" href={`/avatars/${avatarId}/clone`}>record it on the clone page →</Link></li>
+          <li><b>Give it footage to learn from.</b> Upload a video of yourself — ideally a minute of varied,
+            front-facing footage (a few angles, distances and expressions) for the best likeness. We check it
+            matches your consent video, then build the training set from it.</li>
+        </ol>
+      </>)}
 
-      <div className="label" style={{ marginTop: 14 }}>For the best likeness, film</div>
+      <div className="label" style={{ marginTop: compact ? 0 : 14 }}>{compact ? 'Film a new clip' : 'For the best likeness, film'}</div>
       <ul className="helper" style={{ paddingLeft: 18, lineHeight: 1.75, marginTop: 4 }}>
         <li><b>60–90 seconds</b> in good, even light — face a window; avoid backlight and harsh shadows.</li>
         <li><b>Several angles</b> — slowly turn your head: straight on, then left, then right.</li>
@@ -583,24 +595,28 @@ function TwinSetup({ avatarId, onDone }) {
 
       <input ref={fileRef} type="file" accept="video/*" style={{ display: 'none' }} onChange={onPick} />
       <div className="btn-row" style={{ marginTop: 12, gap: 10, display: 'flex', flexWrap: 'wrap' }}>
-        <Link className="btn sm ghost" href={`/avatars/${avatarId}/clone`}>Capture consent</Link>
+        {!compact && <Link className="btn sm ghost" href={`/avatars/${avatarId}/clone`}>Capture consent</Link>}
         <button type="button" className="btn sm" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}>
-          {busy ? 'Working…' : 'Upload footage'}
+          {busy ? 'Working…' : (compact ? 'Upload a new video' : 'Upload footage')}
         </button>
-        <button type="button" className="btn sm ghost" disabled={busy}
-          onClick={() => process({ use_consent: true }, 'Building a basic twin from your consent video…')}>
-          Use my consent video
-        </button>
+        {!compact && (
+          <button type="button" className="btn sm ghost" disabled={busy}
+            onClick={() => process({ use_consent: true }, 'Building a basic twin from your consent video…')}>
+            Use my consent video
+          </button>
+        )}
       </div>
-      <p className="helper" style={{ marginTop: 8 }}>
-        &ldquo;Use my consent video&rdquo; is the quick path — it trains a basic twin from that single clip.
-        A longer, varied video makes a noticeably better one.
-      </p>
+      {!compact && (
+        <p className="helper" style={{ marginTop: 8 }}>
+          &ldquo;Use my consent video&rdquo; is the quick path — it trains a basic twin from that single clip.
+          A longer, varied video makes a noticeably better one.
+        </p>
+      )}
       {state === 'error'
         ? <p className="lp-msg warn" style={{ marginTop: 10 }}>{msg}</p>
         : msg && <p className="helper adm-ok" style={{ marginTop: 10 }}>{msg}</p>}
 
-      <VoiceClone avatarId={avatarId} />
+      {!compact && <VoiceClone avatarId={avatarId} />}
     </div>
   );
 }
