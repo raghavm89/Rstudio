@@ -131,9 +131,10 @@ const Catalogue = {
    */
   async publish(client, { avatarId, region = null }) {
     const { rows } = await client.query(
-      `SELECT a.id, a.mode,
+      `SELECT a.id, a.mode, a.subject_type,
               (SELECT id FROM avatar_loras WHERE avatar_id = a.id AND active) AS lora_id,
-              (SELECT avatar_id FROM look_profiles WHERE avatar_id = a.id)   AS has_look,
+              (SELECT avatar_id FROM look_profiles  WHERE avatar_id = a.id)   AS has_look,
+              (SELECT avatar_id FROM style_profiles WHERE avatar_id = a.id)   AS has_style,
               (SELECT COUNT(*) FROM expression_baselines WHERE avatar_id = a.id)::int AS baselines
          FROM avatars a WHERE a.id = $1`,
       [Number(avatarId)]
@@ -156,17 +157,30 @@ const Catalogue = {
       e.code = "NOT_TRAINED";
       throw e;
     }
-    if (!a.has_look) {
-      const e = new Error("Avatar has no look profile");
-      e.status = 409;
-      e.code = "NO_LOOK";
-      throw e;
-    }
-    if (a.baselines < 1) {
-      const e = new Error("Avatar has no calibration baselines");
-      e.status = 409;
-      e.code = "NOT_CALIBRATED";
-      throw e;
+    // A character is set up with a STYLE profile and QC'd on CLIP; a person with
+    // a LOOK profile and calibrated expression baselines. A character is
+    // publishable on the permissive CLIP floor (CA5 calibration tightens it
+    // later) — the same deal a person gets when activated before calibration.
+    if (a.subject_type === "character") {
+      if (!a.has_style) {
+        const e = new Error("Character avatar has no style profile");
+        e.status = 409;
+        e.code = "NO_STYLE";
+        throw e;
+      }
+    } else {
+      if (!a.has_look) {
+        const e = new Error("Avatar has no look profile");
+        e.status = 409;
+        e.code = "NO_LOOK";
+        throw e;
+      }
+      if (a.baselines < 1) {
+        const e = new Error("Avatar has no calibration baselines");
+        e.status = 409;
+        e.code = "NOT_CALIBRATED";
+        throw e;
+      }
     }
 
     const { rows: upd } = await client.query(
@@ -201,8 +215,13 @@ const Catalogue = {
         WHERE NOT a.is_catalogue
           AND a.mode = 'synthetic'
           AND EXISTS (SELECT 1 FROM avatar_loras l WHERE l.avatar_id = a.id AND l.active)
-          AND EXISTS (SELECT 1 FROM look_profiles lp WHERE lp.avatar_id = a.id)
-          AND EXISTS (SELECT 1 FROM expression_baselines b WHERE b.avatar_id = a.id)
+          AND (
+            (a.subject_type = 'character'
+              AND EXISTS (SELECT 1 FROM style_profiles sp WHERE sp.avatar_id = a.id))
+            OR (a.subject_type IS DISTINCT FROM 'character'
+              AND EXISTS (SELECT 1 FROM look_profiles lp WHERE lp.avatar_id = a.id)
+              AND EXISTS (SELECT 1 FROM expression_baselines b WHERE b.avatar_id = a.id))
+          )
         ORDER BY a.id`
     );
     return { catalogue, publishable };
