@@ -84,6 +84,7 @@ function Cull({ avatarId, initial, reload }) {
   const [cursor, setCursor] = useState(0);
   const [msg, setMsg] = useState(null);
   const [zoom, setZoom] = useState(false);
+  const [addFootage, setAddFootage] = useState(false);
   const history = useRef([]);
   const gridRef = useRef(null);
 
@@ -352,9 +353,24 @@ function Cull({ avatarId, initial, reload }) {
               {kept.length < min && ` · needs at least ${min}`}
               {kept.length > max && ` · at most ${max}`}
             </span>
+            {avatar.mode === 'twin' && (
+              <button className="btn ghost" type="button" onClick={() => setAddFootage((v) => !v)}>
+                {addFootage ? 'Close' : 'Add footage'}
+              </button>
+            )}
             <button className="btn" onClick={train} disabled={!kept.length}>Use these photos</button>
           </div>
         </div>
+
+        {addFootage && avatar.mode === 'twin' && (
+          <div style={{ maxWidth: 680, margin: '0 auto' }}>
+            <p className="hint" style={{ textAlign: 'center', marginTop: 4 }}>
+              Add a clip that turns the head — straight on, then left, then right, through to a
+              side profile — so the set covers every angle. New frames are added to the ones below.
+            </p>
+            <TwinSetup avatarId={avatarId} onDone={() => { setAddFootage(false); reload?.(); }} />
+          </div>
+        )}
 
         {data.generating && (
           /* Culling can start on the frames that have landed — the grid works
