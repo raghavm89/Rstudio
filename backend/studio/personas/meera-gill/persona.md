@@ -18,7 +18,7 @@ slug:            meera-gill
 name:            Meera Gill
 mode:            synthetic
 subject_type:    person
-bible_version:   1
+bible_version:   2
 lora_trigger:    m33r4gll
 
 disclosure_line: "AI-generated virtual creator"
@@ -32,7 +32,7 @@ voice:
 ## Identity block — FROZEN
 
 <!--
-41 words. Physical only. No clothing, location, mood or lighting — those vary per
+43 words. Physical only. No clothing, location, mood or lighting — those vary per
 shot and live in the pickers.
 
 Skin is FAIR by design here (a common, authentic Punjabi look the user asked
@@ -46,10 +46,10 @@ specific details — concrete irregularities the model holds onto across 300 pos
 where vague beauty adjectives would drift to its own average face.
 -->
 
-    25 year old Punjabi woman, fair wheatish skin, warm undertone, oval face,
-    soft jaw, large hazel-brown eyes, defined arched brows, straight nose, full
-    lips, small beauty mark on right cheek, long dark brown wavy hair, tall slim
-    build, 5 foot 7
+    25 year old Punjabi woman, very fair light-wheatish skin with warm undertone,
+    oval face, soft jaw, large hazel-brown eyes, defined arched brows, straight
+    nose, full lips, small beauty mark on right cheek, long dark brown wavy hair,
+    tall slim build, 5 foot 7
 
 ## Avoid block — FROZEN
 
