@@ -76,11 +76,16 @@ const ContentTemplate = {
     }
   },
 
-  /** Platform library + this tenant's own, optionally filtered by category. */
+  /**
+   * Platform library + this tenant's own, optionally filtered by category.
+   * STORIES are excluded — they live in their own Story lane (listStories), not
+   * in the Templates browse.
+   */
   async list(client, tenantId, { category = null } = {}) {
     const { rows } = await client.query(
       `SELECT ${LIST_COLS} FROM content_templates
         WHERE (is_platform OR tenant_id = $1)
+          AND is_story IS NOT TRUE
           AND ($2::text IS NULL OR category = $2)
         ORDER BY is_platform DESC, updated_at DESC, id DESC`,
       [tenantId, category]

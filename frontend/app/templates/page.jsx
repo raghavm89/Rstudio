@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { post, api, errorText } from "../../lib/api";
@@ -9,19 +9,21 @@ import { useAuth } from "../../components/AuthProvider";
 const toLocal = (u) => { if (!u) return u; try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; } };
 
 /**
- * Content templates — pick a ready-made ad / viral recipe and shoot it.
- *
- * A template is a saved shoot recipe (format + shot-by-shot plan + brief).
- * Applying one is a normal shoot through the orchestrator — same quota, same
- * pipeline — so this screen is: choose which avatar shoots, pick a format, go.
- * The library is platform templates (shared) plus this tenant's own.
+ * Templates — ready-made ad / viral recipes, browsed by sub-page (Viral Reels,
+ * Ad, Viral Stills) and shot onto an avatar. Stories are NOT here — they live in
+ * the Story lane. A template is a saved shoot recipe; applying one is a normal
+ * shoot through the orchestrator.
  */
 
-const CATEGORY_LABEL = {
-  ad_video: "Ad video",
-  viral_video: "Viral video",
-  viral_stills: "Viral stills",
+const CATEGORY_LABEL = { viral_video: "Viral Reels", ad_video: "Ad", viral_stills: "Viral Stills" };
+const CATEGORY_BLURB = {
+  viral_video: "Trend-led reels — GRWM, transitions, day-in-my-life.",
+  ad_video: "Punchy product-drop and sale ads with a clear CTA.",
+  viral_stills: "Carousels and photo-dump stills that read as a real day.",
 };
+const CATEGORY_ORDER = ["viral_video", "ad_video", "viral_stills"];
+const catLabel = (c) => CATEGORY_LABEL[c] || (c ? c.replace(/_/g, " ") : c);
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
 export default function Templates() {
   const templates = useResource("/templates");
@@ -50,53 +52,41 @@ function Browse({ d, avatars, reload }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const trained = avatars.filter((a) => a.trained);
-  const [category, setCategory] = useState("all");
+  const [category, setCategory] = useState(null);   // null = sub-page landing
   const [avatarId, setAvatarId] = useState(trained[0]?.id ?? null);
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
 
   const templates = d.templates || [];
-  const cats = Array.from(new Set(templates.map((t) => t.category)));
-  const shown = category === "all" ? templates : templates.filter((t) => t.category === category);
+  const groups = useMemo(() => {
+    const by = new Map();
+    for (const t of templates) {
+      if (!by.has(t.category)) by.set(t.category, []);
+      by.get(t.category).push(t);
+    }
+    const keys = [...by.keys()].sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a), ib = CATEGORY_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+    return keys.map((k) => ({ key: k, list: by.get(k) }));
+  }, [templates]);
 
   async function use(t) {
     setErr(null);
     if (!avatarId) { setErr("Pick an avatar to shoot as first."); return; }
     setBusy(t.id);
-    try {
-      await post(`/templates/${t.id}/apply`, { avatar_id: Number(avatarId) });
-      router.push("/shoots");
-    } catch (e) {
-      setErr(errorText(e));
-    } finally {
-      setBusy(null);
-    }
+    try { await post(`/templates/${t.id}/apply`, { avatar_id: Number(avatarId) }); router.push("/shoots"); }
+    catch (e) { setErr(errorText(e)); } finally { setBusy(null); }
   }
-
   async function remove(t) {
-    setErr(null);
-    setBusy(t.id);
-    try {
-      await api(`/templates/${t.id}`, { method: "DELETE" });
-      await reload();
-    } catch (e) {
-      setErr(errorText(e));
-    } finally {
-      setBusy(null);
-    }
+    setErr(null); setBusy(t.id);
+    try { await api(`/templates/${t.id}`, { method: "DELETE" }); await reload(); }
+    catch (e) { setErr(errorText(e)); } finally { setBusy(null); }
   }
-
   async function publish(t) {
-    setErr(null);
-    setBusy(t.id);
-    try {
-      await post(`/templates/${t.id}/publish`);
-      await reload();
-    } catch (e) {
-      setErr(errorText(e));
-    } finally {
-      setBusy(null);
-    }
+    setErr(null); setBusy(t.id);
+    try { await post(`/templates/${t.id}/publish`); await reload(); }
+    catch (e) { setErr(errorText(e)); } finally { setBusy(null); }
   }
 
   if (!templates.length) {
@@ -108,14 +98,33 @@ function Browse({ d, avatars, reload }) {
     );
   }
 
+  // ── Sub-page landing: category tiles ─────────────────────────────────────
+  if (!category) {
+    return (
+      <div style={S.wrap}>
+        <p className="hint" style={{ marginTop: 0, marginBottom: 18 }}>
+          Pick a format and shoot it in one click. Templates carry the whole plan — the shots, the hook, the caption angle.
+        </p>
+        <div style={S.grid}>
+          {groups.map((g) => (
+            <button key={g.key} style={S.catCard} onClick={() => setCategory(g.key)}>
+              <div style={S.catName}>{catLabel(g.key)}</div>
+              <div style={S.catBlurb}>{CATEGORY_BLURB[g.key] || ""}</div>
+              <div style={S.catCount}>{g.list.length} template{g.list.length === 1 ? "" : "s"} →</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── A sub-page: templates in the chosen category ─────────────────────────
+  const shown = (groups.find((g) => g.key === category) || { list: [] }).list;
   return (
     <div style={S.wrap}>
-      <p className="hint" style={{ marginTop: 0 }}>
-        Pick a format and shoot it in one click. Templates carry the whole plan —
-        the shots, the hook, the caption angle — so there is nothing to write.
-      </p>
-
+      <button style={S.back} onClick={() => setCategory(null)}>← All formats</button>
       <div style={S.controls}>
+        <h1 style={S.h1}>{catLabel(category)}</h1>
         <label style={S.shootAs}>
           <span style={S.shootAsLabel}>Shoot as</span>
           {trained.length ? (
@@ -128,13 +137,6 @@ function Browse({ d, avatars, reload }) {
             </span>
           )}
         </label>
-
-        <div style={S.filters}>
-          <Chip on={category === "all"} onClick={() => setCategory("all")}>All</Chip>
-          {cats.map((c) => (
-            <Chip key={c} on={category === c} onClick={() => setCategory(c)}>{CATEGORY_LABEL[c] || c}</Chip>
-          ))}
-        </div>
       </div>
 
       {err && <div className="load-err" style={{ marginBottom: 16 }}><span>{err}</span></div>}
@@ -146,7 +148,6 @@ function Browse({ d, avatars, reload }) {
               {t.cover_url
                 ? <img src={toLocal(t.cover_url)} alt={t.name} style={S.img} />
                 : <span style={S.kindGlyph}>{t.kind === "carousel" || t.kind === "post" ? "▦" : "►"}</span>}
-              <span style={S.badge}>{CATEGORY_LABEL[t.category] || t.category}</span>
               {!t.is_platform && <span style={S.mine}>Yours</span>}
             </div>
             <div style={S.body}>
@@ -171,27 +172,23 @@ function Browse({ d, avatars, reload }) {
   );
 }
 
-function Chip({ on, onClick, children }) {
-  return <button onClick={onClick} style={{ ...S.chip, ...(on ? S.chipOn : {}) }}>{children}</button>;
-}
-
-const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-
 const S = {
   wrap: { maxWidth: 1080 },
-  controls: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", margin: "8px 0 20px" },
+  h1: { fontSize: 26, fontWeight: 600, margin: 0 },
+  back: { border: "none", background: "none", color: "#6b6459", cursor: "pointer", fontSize: 13, padding: "2px 0", marginBottom: 8 },
+  controls: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", margin: "0 0 20px" },
   shootAs: { display: "flex", alignItems: "center", gap: 10 },
   shootAsLabel: { fontSize: 13, color: "#5a554c" },
   select: { border: "1px solid #d8d2c8", borderRadius: 8, padding: "7px 10px", fontSize: 14, background: "#fff" },
-  filters: { display: "flex", gap: 8, flexWrap: "wrap" },
-  chip: { border: "1px solid #d8d2c8", background: "#fff", borderRadius: 999, padding: "6px 14px", cursor: "pointer", fontSize: 13 },
-  chipOn: { background: "#141414", color: "#fff", borderColor: "#141414" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 18 },
+  catCard: { textAlign: "left", border: "1px solid #e6e1d8", borderRadius: 14, background: "#fff", padding: "18px 18px 16px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, minHeight: 130 },
+  catName: { fontSize: 19, fontWeight: 600 },
+  catBlurb: { fontSize: 13, color: "#6b665c", lineHeight: 1.45, flex: 1 },
+  catCount: { fontSize: 12.5, color: "#5b3df5", fontWeight: 500 },
   card: { border: "1px solid #e6e1d8", borderRadius: 12, overflow: "hidden", background: "#fff", display: "flex", flexDirection: "column" },
   cover: { position: "relative", aspectRatio: "4 / 5", background: "#efece6", display: "flex", alignItems: "center", justifyContent: "center" },
   img: { width: "100%", height: "100%", objectFit: "cover" },
   kindGlyph: { fontSize: 52, color: "#b9b1a3" },
-  badge: { position: "absolute", top: 10, left: 10, background: "rgba(20,20,20,.72)", color: "#fff", fontSize: 11, padding: "3px 8px", borderRadius: 6, letterSpacing: ".03em" },
   mine: { position: "absolute", top: 10, right: 10, background: "#5b3df5", color: "#fff", fontSize: 11, padding: "3px 8px", borderRadius: 6 },
   body: { padding: "14px 14px 8px", flex: 1 },
   name: { fontWeight: 600, fontSize: 15, marginBottom: 6 },
