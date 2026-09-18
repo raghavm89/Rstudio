@@ -1,14 +1,28 @@
 {
   "avatar": "rohan-mehra",
   "name": "Rohan Mehra",
-  "poster": "/hero/rohan-mehra/poster.jpg",
-  "video": null,
+  "poster": "/hero/rohan-mehra/hero-still.jpg",
+  "video": "/hero/rohan-mehra/hero.mp4",
   "width": 880,
   "height": 1104,
   "setups": [
-    { "src": "/hero/rohan-mehra/close.jpg",  "label": "Close · 85mm" },
-    { "src": "/hero/rohan-mehra/cover.jpg",  "label": "Cover" },
-    { "src": "/hero/rohan-mehra/medium.jpg", "label": "Medium · 50mm" },
-    { "src": "/hero/rohan-mehra/full.jpg",   "label": "Full · 35mm" }
-  ]
+    {
+      "src": "/hero/rohan-mehra/close.jpg",
+      "label": "Close · 85mm"
+    },
+    {
+      "src": "/hero/rohan-mehra/cover.jpg",
+      "label": "Cover"
+    },
+    {
+      "src": "/hero/rohan-mehra/medium.jpg",
+      "label": "Medium · 50mm"
+    },
+    {
+      "src": "/hero/rohan-mehra/full.jpg",
+      "label": "Full · 35mm"
+    }
+  ],
+  "seconds": 5,
+  "resolution": "720p"
 }
