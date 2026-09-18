@@ -27,6 +27,13 @@ exports.stories = async (req, res) => {
   res.json({ stories });
 };
 
+// GET /api/studio/stories/cast-options — avatars the user can cast a story from
+// (catalogue + own, ready, person or character), each with a preview.
+exports.castOptions = async (req, res) => {
+  const cast = await ContentTemplate.castOptions(pool, req.user.tenant_id);
+  res.json({ cast });
+};
+
 // POST /api/studio/templates/:id/apply-story — instantiate a story shoot. No
 // avatar_id: the cast comes from the story. Every gate/quota lives downstream.
 exports.applyStory = async (req, res) => {
@@ -34,6 +41,7 @@ exports.applyStory = async (req, res) => {
     const result = await ContentTemplate.applyStory({
       tenantId: req.user.tenant_id, userId: req.user.id,
       templateId: req.params.id,
+      casting: req.body?.casting || {},
       tier: req.user.plan_id ? 'paid' : 'free',
       idempotencyKey: req.body?.idempotency_key || null,
     });

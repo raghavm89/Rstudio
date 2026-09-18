@@ -176,6 +176,7 @@ router.delete('/templates/:id',            authorize(...TENANT_ROLES), parseId('
 router.post  ('/templates/:id/publish',    authorize('admin'), parseId('id'), asyncHandler(templateCtrl.publish));
 // Story library — ready-to-go multi-character stories (cast baked in).
 router.get   ('/stories',                  authorize(...TENANT_ROLES), asyncHandler(templateCtrl.stories));
+router.get   ('/stories/cast-options',      authorize(...TENANT_ROLES), asyncHandler(templateCtrl.castOptions));
 router.post  ('/templates/:id/apply-story',authorize(...TENANT_ROLES), parseId('id'), asyncHandler(templateCtrl.applyStory));
 router.post('/avatars',       authorize(...TENANT_ROLES), asyncHandler(avatarCtrl.create));
 // After /avatars/rules, so the literal segment is matched before the parameter.

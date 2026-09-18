@@ -205,11 +205,10 @@ const ContentTemplate = {
   async apply({ tenantId, userId = null, templateId, avatarId, tier = 'free', idempotencyKey = null, intent = 'cloud' }) {
     const t = await this.get(pool, tenantId, templateId);
     if (!t) throw new TemplateError('No such template', { status: 404 });
-    // A story template carries its own cast — apply it as a multi-character
-    // shoot regardless of which endpoint reached here, so a story is never
-    // mis-applied onto a single lead avatar.
-    if (t.is_story || (t.recipe && Array.isArray(t.recipe.cast) && t.recipe.cast.length)) {
-      return this._applyStoryTemplate(t, { tenantId, userId, tier, idempotencyKey, intent });
+    // A story is script + open roles — it is cast and created from the Story
+    // library (applyStory), never applied onto a single lead avatar here.
+    if (t.is_story) {
+      throw new TemplateError('This is a story — cast and create it from the Story library', { status: 409, code: 'IS_STORY' });
     }
     const recipe = t.recipe || {};
     return Orchestrator.createShoot({
@@ -229,147 +228,136 @@ const ContentTemplate = {
   },
 
   /**
-   * Catalogue avatars a story's cast resolves to, by slug.
-   *
-   * A story's recipe names its cast by CATALOGUE slug (`aanya-kapoor`), not by a
-   * per-tenant avatar id — the whole point is a ready-made cast every tenant can
-   * use. This resolves each slug to a catalogue avatar; a story only applies once
-   * its WHOLE cast exists, so a missing slug is a clean refusal that names who is
-   * not in the catalogue yet.
+   * The roles of a story — the slots the user casts. From `recipe.roles`, or
+   * derived from the distinct `character` keys the scenes reference. One role is
+   * the lead (key 'lead'); `subject` ('any'|'person'|'character') only hints the
+   * cast picker — any catalogue avatar may fill any role.
    */
-  async _resolveCatalogueCast(client, cast) {
-    const members = Array.isArray(cast) ? cast.filter((m) => m && m.slug) : [];
-    if (!members.length) throw new TemplateError('This story has no cast', { status: 409, code: 'NO_CAST' });
-    const slugs = [...new Set(members.map((m) => String(m.slug)))];
-    const { rows } = await client.query(
-      `SELECT id, slug, name FROM avatars WHERE slug = ANY($1::text[]) AND is_catalogue = TRUE`,
-      [slugs]
-    );
-    const bySlug = new Map(rows.map((r) => [r.slug, r]));
-    const missing = slugs.filter((sl) => !bySlug.has(sl));
-    if (missing.length) {
-      throw new TemplateError(
-        `This story's cast is not in the catalogue yet (${missing.join(', ')})`,
-        { status: 409, code: 'CAST_NOT_READY' }
-      );
+  _storyRoles(recipe) {
+    const r = recipe || {};
+    if (Array.isArray(r.roles) && r.roles.length) {
+      return r.roles.map((x) => ({
+        key: String(x.key), label: x.label || x.key, hint: x.hint || null, subject: x.subject || 'any',
+      }));
     }
-    return members.map((m) => {
-      const a = bySlug.get(String(m.slug));
-      return { key: String(m.key || m.slug), slug: m.slug, role: m.role || null, name: m.name || a.name, avatarId: a.id };
-    });
+    const keys = [];
+    for (const sc of (r.scenes || [])) for (const sh of (sc.shots || [])) {
+      const k = sh && sh.character ? String(sh.character) : 'lead';
+      if (!keys.includes(k)) keys.push(k);
+    }
+    if (!keys.length) keys.push('lead');
+    return keys.map((k) => ({ key: k, label: k === 'lead' ? 'Lead' : k, hint: null, subject: 'any' }));
   },
 
   /**
-   * The story library — platform stories + a tenant's own, each with whether its
-   * whole cast is currently in the catalogue. A "coming soon" story stays listed
-   * (the UI shows it) but cannot be applied until every member is catalogued.
-   * The recipe's dialogue is NOT returned — the list is a browse surface.
+   * The Story library — platform stories + a tenant's own, each with its GENRE
+   * and its open ROLES (the slots the user will cast). No dialogue is returned;
+   * the list is a browse surface. The frontend groups by `genre`.
    */
   async listStories(client, tenantId) {
     const { rows } = await client.query(
-      `SELECT id, tenant_id, slug, name, category, kind, frame_count, clip_seconds,
+      `SELECT id, tenant_id, slug, name, category, kind, genre, frame_count, clip_seconds,
               cover_url, is_platform, status, recipe, updated_at
          FROM content_templates
         WHERE is_story AND (is_platform OR tenant_id = $1)
-        ORDER BY is_platform DESC, updated_at DESC, id DESC`,
+        ORDER BY genre NULLS LAST, is_platform DESC, updated_at DESC, id DESC`,
       [tenantId]
     );
-    const slugs = [
-      ...new Set(rows.flatMap((r) => ((r.recipe && r.recipe.cast) || []).map((c) => c.slug).filter(Boolean))),
-    ];
-    let bySlug = new Map();
-    if (slugs.length) {
-      const { rows: av } = await client.query(
-        `SELECT slug, id, name FROM avatars WHERE slug = ANY($1::text[]) AND is_catalogue = TRUE`,
-        [slugs]
-      );
-      bySlug = new Map(av.map((a) => [a.slug, a]));
-    }
     return rows.map((r) => {
       const recipe = r.recipe || {};
-      const cast = ((recipe.cast) || []).map((c) => {
-        const a = bySlug.get(c.slug);
-        return { key: c.key, slug: c.slug, role: c.role || null, name: c.name || (a && a.name) || c.slug, available: Boolean(a) };
-      });
-      const available = cast.length > 0 && cast.every((c) => c.available);
       return {
         id: r.id, slug: r.slug, name: r.name, category: r.category, kind: r.kind,
+        genre: r.genre || recipe.genre || 'other',
         frame_count: r.frame_count, clip_seconds: r.clip_seconds, cover_url: r.cover_url,
         is_platform: r.is_platform, platform: r.tenant_id == null, is_story: true, status: r.status,
         brief: { concept: (recipe.brief && recipe.brief.concept) || null, hook: (recipe.brief && recipe.brief.hook) || null },
-        cast, available, scene_count: Array.isArray(recipe.scenes) ? recipe.scenes.length : 0,
+        roles: this._storyRoles(recipe),
+        scene_count: Array.isArray(recipe.scenes) ? recipe.scenes.length : 0,
         updated_at: r.updated_at,
       };
     });
   },
 
   /**
-   * Apply a story by id (the /stories path): fetch with the platform-or-own
-   * scope, confirm it IS a story, then hand off to the shared story shoot.
+   * The avatars a story can be cast from: every catalogue avatar that is ready
+   * (active LoRA), plus the tenant's own ready avatars — person OR character.
+   * Each carries a preview so the picker can show a face.
    */
-  async applyStory({ tenantId, userId = null, templateId, tier = 'free', idempotencyKey = null, intent = 'cloud' }) {
-    const t = await this.get(pool, tenantId, templateId);
-    if (!t) throw new TemplateError('No such story', { status: 404 });
-    if (!(t.is_story || (t.recipe && Array.isArray(t.recipe.cast) && t.recipe.cast.length))) {
-      throw new TemplateError('That template is not a story', { status: 409, code: 'NOT_A_STORY' });
-    }
-    return this._applyStoryTemplate(t, { tenantId, userId, tier, idempotencyKey, intent });
+  async castOptions(client, tenantId) {
+    const { rows } = await client.query(
+      `SELECT a.id, a.slug, a.name, a.subject_type, a.is_catalogue,
+              (SELECT s2.storage_url FROM studio_assets s2
+                WHERE s2.avatar_id = a.id AND s2.kind IN ('still','thumbnail') AND s2.storage_url IS NOT NULL
+                ORDER BY s2.selected DESC, s2.created_at DESC LIMIT 1) AS preview_url
+         FROM avatars a
+         JOIN avatar_loras l ON l.avatar_id = a.id AND l.active
+        WHERE a.is_catalogue OR a.tenant_id = $1
+        ORDER BY a.is_catalogue DESC, a.name ASC`,
+      [tenantId]
+    );
+    return rows.map((a) => ({
+      id: a.id, slug: a.slug, name: a.name,
+      subject_type: a.subject_type, is_catalogue: a.is_catalogue,
+      preview_url: a.preview_url || null,
+    }));
   },
 
   /**
-   * Instantiate a multi-character shoot from a story recipe.
+   * Create a story reel from a user's CASTING of it.
    *
-   * Resolves the cast's catalogue slugs, auto-selects each catalogue avatar for
-   * the tenant (so the lead and every co-star pass the orchestrator's own
-   * catalogue-selection gate), then runs the ordinary multi-character
-   * createShoot with the lead + cast + scenes. No `client`: createShoot owns its
-   * transaction, exactly like apply().
+   * `casting` maps each role key to a chosen avatar id (a catalogue avatar or the
+   * tenant's own). Every role must be cast. Catalogue picks are auto-selected for
+   * the tenant so they pass the orchestrator's gate; then the ordinary
+   * multi-character createShoot runs with the lead + co-stars + scenes. StoryCast
+   * (inside createShoot) still validates each avatar is usable and refuses
+   * cleanly if one is not.
    */
-  async _applyStoryTemplate(t, { tenantId, userId = null, tier = 'free', idempotencyKey = null, intent = 'cloud' }) {
+  async applyStory({ tenantId, userId = null, templateId, casting = {}, tier = 'free', idempotencyKey = null, intent = 'cloud' }) {
+    const t = await this.get(pool, tenantId, templateId);
+    if (!t) throw new TemplateError('No such story', { status: 404 });
+    if (!t.is_story) throw new TemplateError('That template is not a story', { status: 409, code: 'NOT_A_STORY' });
     const recipe = t.recipe || {};
-    const resolved = await this._resolveCatalogueCast(pool, recipe.cast);
+    const roles = this._storyRoles(recipe);
+    if (!roles.length) throw new TemplateError('This story has no roles to cast', { status: 409, code: 'NO_ROLES' });
 
-    // Auto-select every catalogue member for the tenant — idempotent, so a
-    // re-apply or a member the tenant already has is a no-op.
-    for (const m of resolved) {
-      await pool.query(
-        `INSERT INTO catalogue_selections (tenant_id, avatar_id, selected_by)
-         VALUES ($1, $2, $3) ON CONFLICT (tenant_id, avatar_id) DO NOTHING`,
-        [tenantId, m.avatarId, userId]
+    const cast = casting || {};
+    const missing = roles.filter((r) => !Number.isInteger(Number(cast[r.key])));
+    if (missing.length) {
+      throw new TemplateError(
+        `Cast every role first — still to cast: ${missing.map((r) => r.label || r.key).join(', ')}`,
+        { status: 400, code: 'INCOMPLETE_CAST' }
       );
     }
 
-    const lead = resolved.find((m) => m.role === 'lead' || m.key === 'lead') || resolved[0];
-    // The orchestrator's lead is always cast key 'lead'; if this story labelled
-    // its lead differently, remap the on-screen key in every shot so shots find
-    // their speaker.
+    const ids = [...new Set(roles.map((r) => Number(cast[r.key])))];
+    const { rows: catRows } = await pool.query(
+      `SELECT id FROM avatars WHERE id = ANY($1::int[]) AND is_catalogue = TRUE`, [ids]
+    );
+    for (const c of catRows) {
+      await pool.query(
+        `INSERT INTO catalogue_selections (tenant_id, avatar_id, selected_by)
+         VALUES ($1, $2, $3) ON CONFLICT (tenant_id, avatar_id) DO NOTHING`,
+        [tenantId, c.id, userId]
+      );
+    }
+
+    const leadRole = roles.find((r) => r.key === 'lead') || roles[0];
+    const leadAvatarId = Number(cast[leadRole.key]);
     let scenes = Array.isArray(recipe.scenes) ? recipe.scenes : null;
-    if (scenes && lead.key !== 'lead') {
+    if (scenes && leadRole.key !== 'lead') {
       scenes = scenes.map((sc) => ({
         ...sc,
         shots: (Array.isArray(sc.shots) ? sc.shots : []).map((sh) =>
-          (sh && String(sh.character) === lead.key) ? { ...sh, character: 'lead' } : sh),
+          (sh && String(sh.character) === leadRole.key) ? { ...sh, character: 'lead' } : sh),
       }));
     }
-    const others = resolved
-      .filter((m) => m !== lead)
-      .map((m) => ({ key: m.key, avatarId: m.avatarId, role: m.role }));
+    const others = roles.filter((r) => r !== leadRole).map((r) => ({ key: r.key, avatarId: Number(cast[r.key]) }));
 
     return Orchestrator.createShoot({
-      tenantId,
-      avatarId: lead.avatarId,
-      userId,
-      kind: t.kind,
-      frameCount: t.frame_count,
-      brief: recipe.brief || {},
-      scenes,
-      shots: Array.isArray(recipe.shots) ? recipe.shots : [],
-      scene: recipe.scene || {},
-      cast: others,
-      tier,
-      clipSeconds: t.clip_seconds || 5,
-      idempotencyKey,
-      intent,
+      tenantId, avatarId: leadAvatarId, userId,
+      kind: t.kind, frameCount: t.frame_count, brief: recipe.brief || {},
+      scenes, shots: Array.isArray(recipe.shots) ? recipe.shots : [], scene: recipe.scene || {},
+      cast: others, tier, clipSeconds: t.clip_seconds || 5, idempotencyKey, intent,
     });
   },
 };

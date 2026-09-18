@@ -1,108 +1,173 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { post, errorText } from "../../lib/api";
 import { useResource, Resource } from "../../components/Guard";
 const toLocal = (u) => { if (!u) return u; try { const x = new URL(u); return x.pathname + x.search; } catch (_) { return u; } };
 
 /**
- * Stories — the ready-to-go, multi-character library (facelessreels-style).
- *
- * A story is a template with its CAST baked in: pick a story and a reel is
- * created with those characters and their dialogue already written. There is no
- * avatar to choose — the cast are catalogue avatars the app auto-selects for you
- * on apply. A story whose cast is not fully in the catalogue yet shows as
- * "Coming soon" until it is. Applying is a normal multi-character shoot through
- * the orchestrator — same quota, same pipeline.
+ * Story — its own lane. Pick a GENRE, pick a STORY, then CAST it from the
+ * catalogue (a person or a character per role) and create a multi-character
+ * reel. The story is the script + open roles; nothing is baked to a face.
  */
+
+const GENRE_LABEL = {
+  romance: "Romance", drama: "Drama", friendship: "Friendship",
+  festival: "Festival", slice_of_life: "Slice of life", comedy: "Comedy", other: "More",
+};
+const GENRE_BLURB = {
+  romance: "First dates, confessions, the soft stuff.",
+  drama: "Honest two-handers and the talks you can't postpone.",
+  friendship: "Catch-ups, inside jokes, the group chat energy.",
+  festival: "Function prep, festive chaos, family plans.",
+  slice_of_life: "Everyday, relatable, first-person.",
+  comedy: "Bickering, bits, the daily nonsense.",
+  other: "Everything else.",
+};
+const label = (g) => GENRE_LABEL[g] || (g ? g[0].toUpperCase() + g.slice(1) : "More");
 
 export default function Stories() {
   const stories = useResource("/stories");
+  const castOpts = useResource("/stories/cast-options");
   return (
     <>
       <div className="topbar">
-        <div className="crumb"><b>Stories</b></div>
+        <div className="crumb"><b>Story</b></div>
       </div>
       <div className="page">
         <Resource state={stories}>
-          {(d) => <Browse stories={d.stories || []} />}
+          {(d) => (
+            <Resource state={castOpts}>
+              {(c) => <Browse stories={d.stories || []} cast={c.cast || []} />}
+            </Resource>
+          )}
         </Resource>
       </div>
     </>
   );
 }
 
-function Browse({ stories }) {
+function Browse({ stories, cast }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(null);
+  const [genre, setGenre] = useState(null);       // null = genre grid
+  const [story, setStory] = useState(null);       // null = story list
+  const [casting, setCasting] = useState({});     // { roleKey: avatarId }
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  async function create(story) {
-    if (!story.available) return;
-    setErr(null);
-    setBusy(story.id);
-    try {
-      await post(`/templates/${story.id}/apply-story`, {});
-      router.push("/shoots");
-    } catch (e) {
-      setErr(errorText(e));
-    } finally {
-      setBusy(null);
+  const genres = useMemo(() => {
+    const by = new Map();
+    for (const s of stories) {
+      const g = s.genre || "other";
+      if (!by.has(g)) by.set(g, []);
+      by.get(g).push(s);
     }
-  }
+    return [...by.entries()].map(([key, list]) => ({ key, list }));
+  }, [stories]);
 
   if (!stories.length) {
+    return <p className="hint">No stories yet — the story library appears here.</p>;
+  }
+
+  // ── Step 3: cast the selected story ──────────────────────────────────────
+  if (story) {
+    const roles = story.roles || [];
+    const allCast = roles.every((r) => casting[r.key]);
+    async function create() {
+      setErr(null); setBusy(true);
+      try {
+        await post(`/templates/${story.id}/apply-story`, { casting });
+        router.push("/shoots");
+      } catch (e) { setErr(errorText(e)); } finally { setBusy(false); }
+    }
     return (
-      <p className="hint">
-        No stories yet — the ready-to-go story library appears here. Each one is a
-        multi-character reel with the cast already cast for you.
-      </p>
+      <div style={S.wrap}>
+        <button style={S.back} onClick={() => { setStory(null); setCasting({}); setErr(null); }}>← {label(story.genre)}</button>
+        <h1 style={S.h1}>{story.name}</h1>
+        {story.brief?.concept && <p className="hint" style={{ marginTop: 4 }}>{story.brief.concept}</p>}
+        <p className="hint" style={{ marginTop: 2 }}>{story.scene_count} scene{story.scene_count === 1 ? "" : "s"} · {story.frame_count} shots · cast {roles.length} role{roles.length === 1 ? "" : "s"} from your catalogue.</p>
+
+        {err && <div className="load-err" style={{ margin: "12px 0" }}><span>{err}</span></div>}
+
+        {!cast.length && (
+          <p className="hint" style={{ marginTop: 12 }}>
+            No avatars ready to cast yet — build or catalogue an avatar first, then come back.
+          </p>
+        )}
+
+        {roles.map((role) => (
+          <div key={role.key} style={S.roleBlock}>
+            <div style={S.roleHead}>
+              <span style={S.roleLabel}>{role.label}</span>
+              {role.hint && <span style={S.roleHint}>{role.hint}</span>}
+            </div>
+            <div style={S.castRow}>
+              {cast.map((a) => {
+                const on = casting[role.key] === a.id;
+                return (
+                  <button key={a.id} onClick={() => setCasting((c) => ({ ...c, [role.key]: a.id }))}
+                    style={{ ...S.castCard, ...(on ? S.castCardOn : {}) }} title={a.name}>
+                    <span style={S.castThumb}>
+                      {a.preview_url
+                        ? <img src={toLocal(a.preview_url)} alt={a.name} style={S.castImg} />
+                        : <span style={S.castGlyph}>{a.subject_type === "character" ? "◆" : "◑"}</span>}
+                    </span>
+                    <span style={S.castName}>{a.name}</span>
+                    <span style={S.castKind}>{a.subject_type === "character" ? "character" : "person"}{a.is_catalogue ? " · catalogue" : ""}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        <div style={{ marginTop: 20 }}>
+          <button className="btn" disabled={busy || !allCast || !cast.length} onClick={create}>
+            {busy ? "Creating…" : allCast ? "Create story reel →" : "Cast every role to continue"}
+          </button>
+        </div>
+      </div>
     );
   }
 
+  // ── Step 2: stories in the chosen genre ──────────────────────────────────
+  if (genre) {
+    const g = genres.find((x) => x.key === genre);
+    const list = g ? g.list : [];
+    return (
+      <div style={S.wrap}>
+        <button style={S.back} onClick={() => setGenre(null)}>← All genres</button>
+        <h1 style={S.h1}>{label(genre)}</h1>
+        <p className="hint" style={{ marginTop: 2 }}>{GENRE_BLURB[genre] || ""}</p>
+        <div style={S.grid}>
+          {list.map((s) => (
+            <button key={s.id} style={S.storyCard} onClick={() => { setStory(s); setCasting({}); }}>
+              <div style={S.storyName}>{s.name}</div>
+              {s.brief?.concept && <div style={S.storyConcept}>{s.brief.concept}</div>}
+              <div style={S.storyMeta}>{(s.roles || []).length} role{(s.roles || []).length === 1 ? "" : "s"} · {s.frame_count} shots</div>
+              <div style={S.storyGo}>Cast it →</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step 1: genres ───────────────────────────────────────────────────────
   return (
     <div style={S.wrap}>
-      <p className="hint" style={{ marginTop: 0 }}>
-        Pick a story and a multi-character reel is created for you — the cast and
-        the dialogue are already written. Nothing to set up: the characters are
-        catalogue avatars, added to your workspace when you create the reel.
+      <h1 style={S.h1}>Story</h1>
+      <p className="hint" style={{ marginTop: 2, marginBottom: 18 }}>
+        Pick a genre, pick a story, then cast it from your catalogue — a person or a character in each role.
       </p>
-
-      {err && <div className="load-err" style={{ marginBottom: 16 }}><span>{err}</span></div>}
-
       <div style={S.grid}>
-        {stories.map((story) => (
-          <div key={story.id} style={S.card}>
-            <div style={S.cover}>
-              {story.cover_url
-                ? <img src={toLocal(story.cover_url)} alt={story.name} style={S.img} />
-                : <span style={S.kindGlyph}>►</span>}
-              <span style={S.badge}>Story</span>
-              {!story.available && <span style={S.soon}>Coming soon</span>}
-            </div>
-            <div style={S.body}>
-              <div style={S.name}>{story.name}</div>
-              {story.brief?.concept && <div style={S.concept}>{story.brief.concept}</div>}
-              <div style={S.castRow}>
-                {(story.cast || []).map((c) => (
-                  <span key={c.key} style={{ ...S.castChip, ...(c.available ? {} : S.castChipOff) }} title={c.available ? "In the catalogue" : "Not in the catalogue yet"}>
-                    {c.name}{c.role === "lead" ? " · lead" : ""}
-                  </span>
-                ))}
-              </div>
-              <div style={S.meta}>{story.frame_count} shot{story.frame_count === 1 ? "" : "s"} · {story.clip_seconds}s each</div>
-            </div>
-            <div style={S.action}>
-              <button
-                className="btn"
-                disabled={busy === story.id || !story.available}
-                onClick={() => create(story)}
-              >
-                {busy === story.id ? "Creating…" : story.available ? "Create story reel →" : "Coming soon"}
-              </button>
-            </div>
-          </div>
+        {genres.map((g) => (
+          <button key={g.key} style={S.genreCard} onClick={() => setGenre(g.key)}>
+            <div style={S.genreName}>{label(g.key)}</div>
+            <div style={S.genreBlurb}>{GENRE_BLURB[g.key] || ""}</div>
+            <div style={S.genreCount}>{g.list.length} stor{g.list.length === 1 ? "y" : "ies"} →</div>
+          </button>
         ))}
       </div>
     </div>
@@ -110,20 +175,29 @@ function Browse({ stories }) {
 }
 
 const S = {
-  wrap: { maxWidth: 1080 },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 18 },
-  card: { border: "1px solid #e6e1d8", borderRadius: 12, overflow: "hidden", background: "#fff", display: "flex", flexDirection: "column" },
-  cover: { position: "relative", aspectRatio: "4 / 5", background: "#efece6", display: "flex", alignItems: "center", justifyContent: "center" },
-  img: { width: "100%", height: "100%", objectFit: "cover" },
-  kindGlyph: { fontSize: 52, color: "#b9b1a3" },
-  badge: { position: "absolute", top: 10, left: 10, background: "rgba(91,61,245,.85)", color: "#fff", fontSize: 11, padding: "3px 8px", borderRadius: 6, letterSpacing: ".03em" },
-  soon: { position: "absolute", top: 10, right: 10, background: "rgba(20,20,20,.62)", color: "#fff", fontSize: 11, padding: "3px 8px", borderRadius: 6 },
-  body: { padding: "14px 14px 8px", flex: 1 },
-  name: { fontWeight: 600, fontSize: 15, marginBottom: 6 },
-  concept: { fontSize: 12.5, color: "#6b665c", lineHeight: 1.4, marginBottom: 10 },
-  castRow: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 },
-  castChip: { border: "1px solid #d7cff5", background: "#f4f1ff", color: "#4b34c9", borderRadius: 999, padding: "3px 9px", fontSize: 11.5 },
-  castChipOff: { border: "1px solid #ddd7cd", background: "#f3f0ea", color: "#9a9284" },
-  meta: { fontSize: 12, color: "#8a8478" },
-  action: { padding: "12px 14px", borderTop: "1px solid #f0ece4", display: "flex", gap: 8, alignItems: "center" },
+  wrap: { maxWidth: 1000 },
+  h1: { fontSize: 30, fontWeight: 600, margin: "6px 0 0" },
+  back: { border: "none", background: "none", color: "#6b6459", cursor: "pointer", fontSize: 13, padding: "2px 0", marginBottom: 6 },
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16, marginTop: 18 },
+  genreCard: { textAlign: "left", border: "1px solid #e6e1d8", borderRadius: 14, background: "#fff", padding: "18px 18px 16px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8, minHeight: 130 },
+  genreName: { fontSize: 19, fontWeight: 600 },
+  genreBlurb: { fontSize: 13, color: "#6b665c", lineHeight: 1.45, flex: 1 },
+  genreCount: { fontSize: 12.5, color: "#5b3df5", fontWeight: 500 },
+  storyCard: { textAlign: "left", border: "1px solid #e6e1d8", borderRadius: 14, background: "#fff", padding: "16px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 },
+  storyName: { fontSize: 16, fontWeight: 600 },
+  storyConcept: { fontSize: 12.5, color: "#6b665c", lineHeight: 1.4, flex: 1 },
+  storyMeta: { fontSize: 12, color: "#8a8478" },
+  storyGo: { fontSize: 12.5, color: "#5b3df5", fontWeight: 500 },
+  roleBlock: { marginTop: 20 },
+  roleHead: { display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 },
+  roleLabel: { fontSize: 15, fontWeight: 600 },
+  roleHint: { fontSize: 12, color: "#9a9284" },
+  castRow: { display: "flex", gap: 10, flexWrap: "wrap" },
+  castCard: { width: 116, border: "1px solid #e0dace", borderRadius: 12, background: "#fff", padding: 8, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 },
+  castCardOn: { borderColor: "#5b3df5", boxShadow: "0 0 0 2px rgba(91,61,245,.25)" },
+  castThumb: { width: "100%", aspectRatio: "1 / 1", borderRadius: 9, overflow: "hidden", background: "#efece6", display: "flex", alignItems: "center", justifyContent: "center" },
+  castImg: { width: "100%", height: "100%", objectFit: "cover" },
+  castGlyph: { fontSize: 28, color: "#b9b1a3" },
+  castName: { fontSize: 13, fontWeight: 500, textAlign: "center" },
+  castKind: { fontSize: 10.5, color: "#9a9284", textAlign: "center" },
 };
