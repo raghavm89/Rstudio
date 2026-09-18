@@ -100,6 +100,33 @@ async function storeFrame(storage, { tenantId, avatarSlug, filename, buf }) {
  * folder. Throws TwinIngestError with a user-safe message on any failure, so a
  * caller can surface it.
  */
+// ── Mapping a measured frame onto the coverage grid ──────────────────────────
+// A twin's frames come from uploaded video with no cell labels, so derive them
+// from what insightface measured: yaw -> angle (the axis that decides whether a
+// profile renders as a different person), face fraction -> framing, luminance
+// spread -> light. Null when unmeasurable — a frame the grid does not count,
+// never a wrong label.
+function angleFromYaw(yaw) {
+  const v = Number(yaw);
+  if (yaw == null || !Number.isFinite(v)) return null;
+  const a = Math.abs(v);
+  if (a <= 20) return 'front';
+  if (a <= 50) return 'three-quarter';
+  return 'profile';
+}
+function framingFromFraction(fraction) {
+  const v = Number(fraction);
+  if (fraction == null || !Number.isFinite(v)) return null;
+  if (v >= 0.10) return 'close';
+  if (v >= 0.025) return 'medium';
+  return 'full';
+}
+function qualityFromContrast(contrast) {
+  const v = Number(contrast);
+  if (contrast == null || !Number.isFinite(v)) return null;
+  return v >= 0.20 ? 'hard' : 'soft';
+}
+
 async function ingest({ avatarId, tenantId, frames = 60, keep = 40, sourcePath, isVideo = true, onProgress = () => {} }) {
   const { rows: av } = await pool.query(
     'SELECT id, tenant_id, slug, name, mode FROM avatars WHERE id = $1 AND tenant_id = $2', [avatarId, tenantId]);
@@ -129,7 +156,12 @@ async function ingest({ avatarId, tenantId, frames = 60, keep = 40, sourcePath, 
     for (const fp of framePaths) {
       try {
         const e = await embedder.embed(fp, {});
-        if (e && Array.isArray(e.embedding)) usable.push({ path: fp, emb: e.embedding });
+        if (e && Array.isArray(e.embedding)) usable.push({
+          path: fp, emb: e.embedding,
+          angle: angleFromYaw(e.yaw),
+          framing: framingFromFraction(e.face_fraction),
+          quality: qualityFromContrast(e.light_contrast),
+        });
       } catch { /* skip frames with no/one-too-many faces */ }
     }
     if (!usable.length) throw new TwinIngestError('No usable face was found in the footage. Use clearer, front-facing video.', 'NO_FACE');
@@ -167,9 +199,10 @@ async function ingest({ avatarId, tenantId, frames = 60, keep = 40, sourcePath, 
         const storageKey = await storeFrame(storage, { tenantId, avatarSlug: avatar.slug, filename: base, buf });
         await client.query(
           `INSERT INTO seed_candidates (avatar_id, filename, idx, angle, framing, quality, seed, storage_key, job_id, batch, kind)
-           VALUES ($1,$2,$3,NULL,NULL,NULL,NULL,$4,NULL,$5,'pool')
-           ON CONFLICT (avatar_id, filename) DO UPDATE SET storage_key = EXCLUDED.storage_key`,
-          [avatarId, base, n, storageKey, batch]);
+           VALUES ($1,$2,$3,$4,$5,$6,NULL,$7,NULL,$8,'pool')
+           ON CONFLICT (avatar_id, filename) DO UPDATE SET storage_key = EXCLUDED.storage_key,
+             angle = EXCLUDED.angle, framing = EXCLUDED.framing, quality = EXCLUDED.quality`,
+          [avatarId, base, n, item.angle || null, item.framing || null, item.quality || null, storageKey, batch]);
         n += 1;
       }
       await client.query('COMMIT');
@@ -184,4 +217,4 @@ async function ingest({ avatarId, tenantId, frames = 60, keep = 40, sourcePath, 
   }
 }
 
-module.exports = { ingest, TwinIngestError };
+module.exports = { ingest, TwinIngestError, angleFromYaw, framingFromFraction, qualityFromContrast };

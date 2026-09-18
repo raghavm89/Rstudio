@@ -123,6 +123,53 @@ def analyse(app, path, expect_aspect=None, aspect_tolerance=0.02):
     # label alone.
     result["face_fraction"] = float(round(area(face) / (width * height), 5)) if width and height else 0.0
 
+    # Head pose. `yaw` is the left/right rotation the coverage grid calls the
+    # "angle" axis (front / three-quarter / profile). buffalo_l's 3D-landmark
+    # model populates face.pose = [pitch, yaw, roll]; if a lighter model pack
+    # without it is ever used, estimate yaw from the 5-point landmarks (the
+    # nose's horizontal offset from the eye midpoint, over the inter-eye
+    # distance). Reported, not judged — twinIngest maps it onto the grid.
+    yaw = None
+    pitch = None
+    pose = getattr(face, "pose", None)
+    if pose is not None:
+        try:
+            pitch = float(pose[0])
+            yaw = float(pose[1])
+        except Exception:  # noqa: BLE001
+            yaw = None
+            pitch = None
+    if yaw is None:
+        try:
+            kps = face.kps
+            lx, ly = float(kps[0][0]), float(kps[0][1])
+            rx, ry = float(kps[1][0]), float(kps[1][1])
+            nx = float(kps[2][0])
+            eye_mid_x = (lx + rx) / 2.0
+            inter = max(1.0, ((rx - lx) ** 2 + (ry - ly) ** 2) ** 0.5)
+            yaw = float(max(-90.0, min(90.0, (nx - eye_mid_x) / inter * 90.0)))
+        except Exception:  # noqa: BLE001
+            yaw = None
+    result["yaw"] = yaw
+    result["pitch"] = pitch
+
+    # Light hardness — the standard deviation of luminance inside the face box,
+    # normalised to 0..1. Hard, directional light throws strong highlight and
+    # shadow (high std); flat, soft light is even (low std). `array` is BGR, so
+    # the luminance weights are swapped accordingly. Advisory: labels, does not
+    # gate.
+    try:
+        bx1 = max(0, int(x1)); by1 = max(0, int(y1))
+        bx2 = min(width, int(x2)); by2 = min(height, int(y2))
+        crop = array[by1:by2, bx1:bx2]
+        if crop.size:
+            lum = 0.114 * crop[:, :, 0] + 0.587 * crop[:, :, 1] + 0.299 * crop[:, :, 2]
+            result["light_contrast"] = float(round(float(np.std(lum)) / 255.0, 4))
+        else:
+            result["light_contrast"] = None
+    except Exception:  # noqa: BLE001
+        result["light_contrast"] = None
+
     return result
 
 

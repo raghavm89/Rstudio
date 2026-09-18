@@ -75,14 +75,31 @@ function parseCandidate(filename) {
   return { filename, idx: Number(index), framing, angle, quality, seed };
 }
 
+/**
+ * A twin's frames are uploaded footage, labelled from head pose at ingest rather
+ * than generated one-per-cell. Casual footage cannot be asked to span every
+ * framing and light the way a synthetic pool can, so a twin set is gated on the
+ * one axis that decides identity — ANGLE (front / three-quarter / profile),
+ * where a missing profile makes the model render a different face. A synthetic
+ * pool is gated on all three axes, unchanged. Twin frames are detected by their
+ * `twin-…` batch; rows without a batch (older callers) get the full grid.
+ */
+function isTwinSet(kept) {
+  return kept.some((k) => /^twin-/.test(String(k.batch || '')));
+}
+function coverageRules(kept) {
+  return isTwinSet(kept) ? COVERAGE.filter((r) => r.key === 'angle') : COVERAGE;
+}
+
 /** What is still missing from a selection. The export gate and the strip share it. */
-function coverageGaps(kept) {
+function coverageGaps(kept, rulesList) {
+  const rules = rulesList || coverageRules(kept);
   const have = {
     angle:   new Set(kept.map((k) => k.angle)),
     framing: new Set(kept.map((k) => k.framing)),
     quality: new Set(kept.map((k) => k.quality)),
   };
-  return COVERAGE
+  return rules
     .map((rule) => ({
       ...rule,
       present: rule.of.filter((v) => have[rule.key].has(v)),
@@ -252,7 +269,7 @@ async function keptForExport(client, tenantId, avatarId) {
     // Without it the export could only look on the local disk, and every
     // queue-generated frame — which is every frame the product itself makes —
     // came back as "not on this machine".
-    `SELECT filename, idx, angle, framing, quality, storage_key
+    `SELECT filename, idx, angle, framing, quality, storage_key, batch
        FROM seed_candidates
       WHERE avatar_id = $1 AND tenant_id = $2 AND verdict = 'keep' AND kind = 'pool'
       ORDER BY idx NULLS LAST, filename`,
