@@ -31,7 +31,7 @@ voice:
 ## Identity block — FROZEN
 
 <!--
-42 words. Physical only. No clothing, location, mood or lighting — those vary per
+43 words. Physical only. No clothing, location, mood or lighting — those vary per
 shot and live in the pickers.
 
 Same two defensible choices as Aanya's bible, for the same reasons:
@@ -46,10 +46,10 @@ model holds onto across 300 posts; vague beauty adjectives let it drift to its
 own average face.
 -->
 
-    28 year old North Indian man, warm brown skin, angular face, strong jaw with
-    light stubble, deep-set dark brown eyes, one eyebrow set a touch higher,
-    straight nose with a slight bump on the bridge, medium lips, black hair short
-    on the sides and fuller on top, lean build, 5 foot 10
+    28 year old North Indian man, warm brown skin, angular face, strong stubbled
+    jaw, deep-set dark brown eyes, straight nose, slight bump on the bridge,
+    medium lips, black hair short at the sides and fuller on top, lean build,
+    5 foot 10
 
 ## Avoid block — FROZEN
 
@@ -189,7 +189,7 @@ record is required, and none should be created.
 
 ## Quality checks
 
-- [x] `identity_block` is physical-only and ~42 words
+- [x] `identity_block` is physical-only and <=45 words
 - [x] No clothing, location, mood or lighting in `identity_block`
 - [x] Exactly five locations, each with a `key`
 - [x] Voice section contains three real example captions

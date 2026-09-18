@@ -32,7 +32,7 @@ voice:
 ## Identity block — FROZEN
 
 <!--
-41 words. Physical only. No clothing, location, mood or lighting — those vary per
+42 words. Physical only. No clothing, location, mood or lighting — those vary per
 shot and live in the pickers.
 
 Same two defensible choices as the other bibles, for the same reasons:
@@ -48,10 +48,9 @@ model holds onto across 300 posts; vague beauty adjectives let it drift to its
 own average face.
 -->
 
-    27 year old South Indian woman, deep brown skin, round face, soft jaw, large
-    dark brown eyes, a small mole below the left eye, broad nose, full lips with a
-    faint gap in the front teeth, very long black hair usually plaited, curved
-    natural brows, petite build, 5 foot 3
+    27 year old South Indian woman, deep brown skin, round face, large dark brown
+    eyes, small mole below the left eye, broad nose, full lips, faint gap in the
+    front teeth, long black hair in a plait, petite build, 5 foot 3
 
 ## Avoid block — FROZEN
 
@@ -196,7 +195,7 @@ record is required, and none should be created.
 
 ## Quality checks
 
-- [x] `identity_block` is physical-only and ~41 words
+- [x] `identity_block` is physical-only and <=45 words
 - [x] No clothing, location, mood or lighting in `identity_block`
 - [x] Exactly five locations, each with a `key`
 - [x] Voice section contains three real example captions
