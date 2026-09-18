@@ -53,6 +53,26 @@ export default function PersonaLanding({ assets = null }) {
           </div>
         </section>
 
+        <section className="z-sec">
+          <p className="z-eyebrow">THE CATALOGUE</p>
+          <h2 className="z-h2">Ready-made personas,<br />or build your own.</h2>
+          <p className="z-lead" style={{ maxWidth: 620 }}>Pick a fully-built face from the catalogue and start posting today — or invent your own. Every one is identity-locked and QC&rsquo;d on every frame.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 18, marginTop: 24 }}>
+            {[
+              { img: '/hero/rohan-mehra/cover.jpg', name: 'Rohan Mehra', tag: '28 · café owner, Mumbai' },
+              { img: '/hero/poster.jpg', name: 'Aanya Kapoor', tag: '26 · product designer, Mumbai' },
+            ].map((persona) => (
+              <figure key={persona.name} style={{ margin: 0, borderRadius: 14, overflow: 'hidden', background: '#161616', border: '1px solid rgba(255,255,255,.08)' }}>
+                <img src={persona.img} alt={persona.name} style={{ width: '100%', aspectRatio: '4 / 5', objectFit: 'cover', display: 'block' }} />
+                <figcaption style={{ padding: '12px 14px' }}>
+                  <b style={{ display: 'block', fontSize: 15 }}>{persona.name}</b>
+                  <span style={{ fontSize: 12.5, opacity: 0.6 }}>{persona.tag}</span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
         <section className="z-close">
           <div>
             <h2 className="z-h2">Your persona, in <span className="a">one shoot</span>.</h2>

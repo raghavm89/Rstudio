@@ -1,0 +1,26 @@
+{
+  "avatar": "rohan-mehra",
+  "name": "Rohan Mehra",
+  "setups": [
+    {
+      "key": "poster",
+      "file": "poster.jpg"
+    },
+    {
+      "key": "close",
+      "file": "close.jpg"
+    },
+    {
+      "key": "medium",
+      "file": "medium.jpg"
+    },
+    {
+      "key": "full",
+      "file": "full.jpg"
+    },
+    {
+      "key": "cover",
+      "file": "cover.jpg"
+    }
+  ]
+}
